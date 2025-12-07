@@ -82,7 +82,8 @@ function runSetupCommands() {
     "bun install technicalindicators@3.1.0",
     "bun add ccxt@^4.3.0 @alpacahq/alpaca-trade-api@^3.0.0",
     "bun add protobufjs@^7.2.6",
-    "bun install react-error-boundary"
+    "bun install react-error-boundary",
+    "bun add react-error-boundary"
 ];
     
     if (commands.length === 0) {

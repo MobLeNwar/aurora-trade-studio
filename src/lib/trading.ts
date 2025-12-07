@@ -1,5 +1,5 @@
 import { SMA, RSI } from 'technicalindicators';
-import * as ccxt from 'ccxt';
+
 export interface Candle { timestamp: number; open: number; high: number; low: number; close: number; volume: number; }
 export interface Strategy {
   type: 'sma-cross' | 'rsi-filter';
@@ -13,7 +13,10 @@ export interface MonteCarloResult { meanPnl: number; stdDev: number; pnlDistribu
 let lastFetchedData: Candle[] = [];
 export async function fetchHistoricalData({ exchange = 'binance', symbol = 'BTC/USDT', timeframe = '1h', limit = 500 }: { exchange?: string; symbol?: string; timeframe?: string; limit?: number }): Promise<Candle[] | null> {
   try {
-    const exchangeInstance = new (ccxt as any)[exchange]() as ccxt.Exchange;
+    const ccxtModule: any = await new Function("return import('ccxt')")();
+    const ExchangeClass = (ccxtModule as any)?.[exchange];
+    if (!ExchangeClass) throw new Error(`Exchange ${exchange} not found in ccxt module`);
+    const exchangeInstance: any = new ExchangeClass();
     const ohlcv = await exchangeInstance.fetchOHLCV(symbol, timeframe, undefined, limit);
     if (!ohlcv || ohlcv.length < 100) {
       throw new Error(`Insufficient data received from ${exchange}. Got ${ohlcv?.length || 0} candles.`);
@@ -33,7 +36,10 @@ export async function fetchHistoricalData({ exchange = 'binance', symbol = 'BTC/
 }
 export async function fetchLivePrice({ exchange = 'binance', symbol = 'BTC/USDT' }: { exchange?: string; symbol?: string }): Promise<number | null> {
   try {
-    const exchangeInstance = new (ccxt as any)[exchange]() as ccxt.Exchange;
+    const ccxtModule: any = await new Function("return import('ccxt')")();
+    const ExchangeClass = (ccxtModule as any)?.[exchange];
+    if (!ExchangeClass) throw new Error(`Exchange ${exchange} not found in ccxt module`);
+    const exchangeInstance: any = new ExchangeClass();
     const ticker = await exchangeInstance.fetchTicker(symbol);
     return ticker.last ?? null;
   } catch (error) {
