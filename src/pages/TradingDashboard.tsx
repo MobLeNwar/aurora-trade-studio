@@ -18,7 +18,45 @@ import { Toaster, toast } from 'sonner';
 import { Link } from 'react-router-dom';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ErrorBoundary } from 'react-error-boundary';
+class ErrorBoundary extends React.Component<
+  { FallbackComponent: React.ComponentType<{ error: Error; resetErrorBoundary: () => void }>; onReset?: () => void; children?: React.ReactNode },
+  { error: Error | null }
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { error: null };
+    this.resetErrorBoundary = this.resetErrorBoundary.bind(this);
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: any) {
+    // Preserve original behavior of logging errors to console
+    console.error('ErrorBoundary caught an error', error, info);
+  }
+
+  resetErrorBoundary() {
+    this.setState({ error: null });
+    if (typeof this.props.onReset === 'function') {
+      try {
+        this.props.onReset();
+      } catch (e) {
+        // swallow to avoid bubbling
+        console.error('Error in onReset handler', e);
+      }
+    }
+  }
+
+  render() {
+    if (this.state.error) {
+      const Fallback = this.props.FallbackComponent;
+      return <Fallback error={this.state.error} resetErrorBoundary={this.resetErrorBoundary} />;
+    }
+    return this.props.children as React.ReactElement;
+  }
+}
 const initialStrategy: Strategy = {
   type: 'sma-cross',
   params: { shortPeriod: 10, longPeriod: 20 },
@@ -174,9 +212,9 @@ export default function TradingDashboard() {
               <Tabs defaultValue="trades" value={activeTab} onValueChange={setActiveTab} role="tablist" aria-label="Trading views"><TabsList><TabsTrigger value="trades">Trades</TabsTrigger><TabsTrigger value="paper-trading">Paper Trading</TabsTrigger><TabsTrigger value="library">Library</TabsTrigger></TabsList>
                 <AnimatePresence mode="wait">
                   <motion.div key={activeTab} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.2 }}>
-                    <TabsContent value="trades" forceMount={activeTab === 'trades'} className={activeTab !== 'trades' ? 'hidden' : ''}><TradeTable trades={backtestResult?.trades || []} /></TabsContent>
-                    <TabsContent value="paper-trading" forceMount={activeTab === 'paper-trading'} className={activeTab !== 'paper-trading' ? 'hidden' : ''}><PaperTradingMonitor symbol={symbol} exchange={exchange} /></TabsContent>
-                    <TabsContent value="library" forceMount={activeTab === 'library'} className={activeTab !== 'library' ? 'hidden' : ''}><StrategyLibrary currentStrategy={strategy} onLoadStrategy={setStrategy} /></TabsContent>
+                    <TabsContent value="trades" forceMount={activeTab === 'trades' ? true : undefined} className={activeTab !== 'trades' ? 'hidden' : ''}><TradeTable trades={backtestResult?.trades || []} /></TabsContent>
+                    <TabsContent value="paper-trading" forceMount={activeTab === 'paper-trading' ? true : undefined} className={activeTab !== 'paper-trading' ? 'hidden' : ''}><PaperTradingMonitor symbol={symbol} exchange={exchange} /></TabsContent>
+                    <TabsContent value="library" forceMount={activeTab === 'library' ? true : undefined} className={activeTab !== 'library' ? 'hidden' : ''}><StrategyLibrary currentStrategy={strategy} onLoadStrategy={setStrategy} /></TabsContent>
                   </motion.div>
                 </AnimatePresence>
               </Tabs>

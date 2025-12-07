@@ -178,3 +178,79 @@ export function parseCsvData(csvString: string): Candle[] {
     return { timestamp: ts, open: parseFloat(open), high: parseFloat(high), low: parseFloat(low), close: parseFloat(close), volume: parseFloat(volume) };
   }).filter(c => !isNaN(c.timestamp) && !isNaN(c.close));
 }
+
+/**
+ * Perform a simple grid-search over numeric parameter ranges and return the Strategy
+ * with the best found params according to runBacktest using metrics.sharpeRatio (higher is better).
+ *
+ * Keys that exist on strategy.risk are applied to risk; keys that exist on strategy.params are applied to params;
+ * unknown keys are added to params.
+ *
+ * This implementation is intended for small search spaces (exhaustive grid).
+ */
+export function optimizeParams(strategy: Strategy, paramRanges: Record<string, number[]>, candles: Candle[]): Strategy {
+  const keys = Object.keys(paramRanges);
+  if (keys.length === 0) return strategy;
+
+  // Build combinations (cartesian product) of the provided ranges.
+  let combos: number[][] = [[]];
+  for (const k of keys) {
+    const vals = paramRanges[k] ?? [];
+    if (!Array.isArray(vals) || vals.length === 0) {
+      // If a key has no values, skip it in combinations (keeps previous combos unchanged).
+      continue;
+    }
+    const next: number[][] = [];
+    for (const combo of combos) {
+      for (const v of vals) next.push([...combo, v]);
+    }
+    combos = next;
+  }
+
+  // If combos ended up empty (e.g., all ranges empty), return original strategy.
+  if (combos.length === 0) return strategy;
+
+  let bestStrategy: Strategy = strategy;
+  let bestSharpe = -Infinity;
+
+  for (const combo of combos) {
+    // Create candidate strategy by cloning to avoid mutating the original
+    const candidate: Strategy = {
+      type: strategy.type,
+      params: { ...strategy.params },
+      risk: { ...strategy.risk },
+    };
+
+    // Apply combo values to candidate
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      // If combo shorter than keys (due to skipped empty ranges), guard access
+      const value = combo[i];
+      if (typeof value === 'undefined') continue;
+      if (key in candidate.risk) {
+        // dynamic assignment to risk
+        (candidate.risk as any)[key] = value;
+      } else if (key in candidate.params) {
+        (candidate.params as any)[key] = value;
+      } else {
+        // unknown keys stored in params
+        (candidate.params as any)[key] = value;
+      }
+    }
+
+    // Evaluate candidate safely
+    try {
+      const result = runBacktest(candidate, candles);
+      const sharpe = result?.metrics?.sharpeRatio ?? 0;
+      if (typeof sharpe === 'number' && sharpe > bestSharpe) {
+        bestSharpe = sharpe;
+        bestStrategy = candidate;
+      }
+    } catch (e) {
+      // Ignore candidates that cause errors and continue searching
+      continue;
+    }
+  }
+
+  return bestStrategy;
+}
