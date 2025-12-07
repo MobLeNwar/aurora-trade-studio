@@ -18,56 +18,19 @@ import { Toaster, toast } from 'sonner';
 import { Link } from 'react-router-dom';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-class ErrorBoundary extends React.Component<
-  { FallbackComponent: React.ComponentType<{ error: Error; resetErrorBoundary: () => void }>; onReset?: () => void; children?: React.ReactNode },
-  { error: Error | null }
-> {
-  constructor(props: any) {
-    super(props);
-    this.state = { error: null };
-    this.resetErrorBoundary = this.resetErrorBoundary.bind(this);
-  }
-
-  static getDerivedStateFromError(error: Error) {
-    return { error };
-  }
-
-  componentDidCatch(error: Error, info: any) {
-    // Preserve original behavior of logging errors to console
-    console.error('ErrorBoundary caught an error', error, info);
-  }
-
-  resetErrorBoundary() {
-    this.setState({ error: null });
-    if (typeof this.props.onReset === 'function') {
-      try {
-        this.props.onReset();
-      } catch (e) {
-        // swallow to avoid bubbling
-        console.error('Error in onReset handler', e);
-      }
-    }
-  }
-
-  render() {
-    if (this.state.error) {
-      const Fallback = this.props.FallbackComponent;
-      return <Fallback error={this.state.error} resetErrorBoundary={this.resetErrorBoundary} />;
-    }
-    return this.props.children as React.ReactElement;
-  }
-}
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import fallbackCandlesData from '@/pages/TradingSimulatorData.json';
 const initialStrategy: Strategy = {
   type: 'sma-cross',
   params: { shortPeriod: 10, longPeriod: 20 },
   risk: { positionSizePercent: 100, stopLossPercent: 2, slippagePercent: 0.05, feePercent: 0.1, trailingStopPercent: 0 },
 };
-function ErrorFallback({ error, resetErrorBoundary }: { error: Error, resetErrorBoundary: () => void }) {
+function ErrorFallback() {
   return (
     <div role="alert" className="p-8 text-center bg-destructive/10 rounded-lg">
-      <h2 className="text-lg font-semibold text-destructive-foreground">Something went wrong</h2>
-      <pre className="text-sm my-4">{error.message}</pre>
-      <Button onClick={resetErrorBoundary}>Try again</Button>
+      <h2 className="text-lg font-semibold text-destructive-foreground">Dashboard Error</h2>
+      <p className="my-4 text-muted-foreground">Something went wrong while loading the dashboard.</p>
+      <Button onClick={() => window.location.reload()}>Reload Dashboard</Button>
     </div>
   );
 }
@@ -85,7 +48,7 @@ export default function TradingDashboard() {
   const [activeTab, setActiveTab] = useState('trades');
   const handleRunBacktest = useCallback((currentStrategy: Strategy) => {
     if (candles.length === 0) {
-      toast.error("No historical data available to run a backtest.");
+      toast.error("No historical data available. Please upload CSV or wait for data to fetch.");
       return;
     }
     setIsLoading(true);
@@ -117,17 +80,24 @@ export default function TradingDashboard() {
       toast.info(`Fetching historical data for ${symbol}...`);
       try {
         const data = await fetchHistoricalData({ symbol, exchange, limit: 500 });
-        if (data) {
+        if (!data || data.length === 0) {
+          setCandles(fallbackCandlesData as Candle[]);
+          toast.warning('No real-time data available. Using sample data for demonstration.', {
+            description: 'Upload CSV or check connection for live data.',
+          });
+        } else {
           setCandles(data);
           toast.success(`Loaded ${data.length} candles for ${symbol}.`);
-        } else {
-          toast.error(`Failed to fetch data for ${symbol}.`);
         }
       } catch (error) {
         console.warn('Data fetch error:', error);
-        toast.error('Failed to fetch data', { description: 'Could not retrieve market data.' });
+        setCandles(fallbackCandlesData as Candle[]);
+        toast.error('Failed to fetch market data. Using sample fallback.', {
+          description: 'Upload CSV for custom data or retry.',
+        });
+      } finally {
+        setIsFetchingData(false);
       }
-      setIsFetchingData(false);
     };
     loadData();
   }, [symbol, exchange]);
@@ -180,54 +150,58 @@ export default function TradingDashboard() {
         <Button variant="ghost" asChild><Link to="/settings"><Settings className="w-4 h-4 mr-2" />Settings</Link></Button>
         <ThemeToggle className="relative top-0 right-0" />
       </header>
-      <div className="max-w-8xl mx-auto px-4 sm:px-6 lg:px-8"><div className="py-8 md:py-10">
-        <ErrorBoundary FallbackComponent={ErrorFallback} onReset={() => window.location.reload()}>
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <main className="lg:col-span-8 space-y-6">
-              <Card className="shadow-soft rounded-2xl">
-                <CardHeader><CardTitle>Market Data</CardTitle></CardHeader>
-                <CardContent className="flex flex-col sm:flex-row gap-4">
-                  <div className="flex-1"><Select value={exchange} onValueChange={setExchange}><SelectTrigger><SelectValue placeholder="Select Exchange" /></SelectTrigger><SelectContent><SelectItem value="binance">Binance</SelectItem><SelectItem value="coinbasepro">Coinbase Pro</SelectItem><SelectItem value="kraken">Kraken</SelectItem></SelectContent></Select></div>
-                  <div className="flex-1"><Select value={symbol} onValueChange={setSymbol}><SelectTrigger><SelectValue placeholder="Select Symbol" /></SelectTrigger><SelectContent><SelectItem value="BTC/USDT">BTC/USDT</SelectItem><SelectItem value="ETH/USDT">ETH/USDT</SelectItem><SelectItem value="SOL/USDT">SOL/USDT</SelectItem></SelectContent></Select></div>
-                  <CsvUploader onDataLoaded={setCandles} />
-                </CardContent>
-              </Card>
-              <AnimatePresence>{backtestResult && <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}><BacktestSummary metrics={backtestResult.metrics} monteCarlo={monteCarloResult} /></motion.div>}</AnimatePresence>
-              <Card className="shadow-soft rounded-2xl overflow-hidden">
-                <CardHeader className="flex flex-row items-center justify-between"><CardTitle>Performance</CardTitle><div className="flex items-center gap-2">{isFetchingData && <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />}<Button variant="outline" size="sm" onClick={handleExport} disabled={!backtestResult}><Download className="w-4 h-4 mr-2" /> Export</Button></div></CardHeader>
-                <CardContent className="h-[400px] p-0">
-                  {isFetchingData ? <Skeleton className="w-full h-full" /> :
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={backtestResult?.equityCurve ?? []}>
-                      <defs><linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#F38020" stopOpacity={0.8}/><stop offset="95%" stopColor="#F38020" stopOpacity={0}/></linearGradient></defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} />
-                      <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} domain={['dataMin', 'dataMax']} />
-                      <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))', borderRadius: 'var(--radius)' }} />
-                      <Area type="monotone" dataKey="value" stroke="#F38020" fillOpacity={1} fill="url(#colorEquity)" name="Equity" />
-                    </AreaChart>
-                  </ResponsiveContainer>}
-                </CardContent>
-              </Card>
-              <Tabs defaultValue="trades" value={activeTab} onValueChange={setActiveTab} role="tablist" aria-label="Trading views"><TabsList><TabsTrigger value="trades">Trades</TabsTrigger><TabsTrigger value="paper-trading">Paper Trading</TabsTrigger><TabsTrigger value="library">Library</TabsTrigger></TabsList>
-                <AnimatePresence mode="wait">
-                  <motion.div key={activeTab} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.2 }}>
-                    <TabsContent value="trades" forceMount={activeTab === 'trades' ? true : undefined} className={activeTab !== 'trades' ? 'hidden' : ''}><TradeTable trades={backtestResult?.trades || []} /></TabsContent>
-                    <TabsContent value="paper-trading" forceMount={activeTab === 'paper-trading' ? true : undefined} className={activeTab !== 'paper-trading' ? 'hidden' : ''}><PaperTradingMonitor symbol={symbol} exchange={exchange} /></TabsContent>
-                    <TabsContent value="library" forceMount={activeTab === 'library' ? true : undefined} className={activeTab !== 'library' ? 'hidden' : ''}><StrategyLibrary currentStrategy={strategy} onLoadStrategy={setStrategy} /></TabsContent>
-                  </motion.div>
-                </AnimatePresence>
-              </Tabs>
-            </main>
-            <aside className="lg:col-span-4 space-y-6">
-              <Tabs defaultValue="strategy" className="w-full"><TabsList className="grid w-full grid-cols-2"><TabsTrigger value="strategy"><Settings className="w-4 h-4 mr-2" />Strategy</TabsTrigger><TabsTrigger value="ai-explorer"><Bot className="w-4 h-4 mr-2" />AI Explorer</TabsTrigger></TabsList>
-                <TabsContent value="strategy" asChild><motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}><StrategyCard strategy={strategy} onStrategyChange={setStrategy} onRunBacktest={handleRunBacktest} isLoading={isLoading} /><Button onClick={handleOptimize} disabled={isOptimizing} className="w-full mt-4"><BrainCircuit className="w-4 h-4 mr-2" /> {isOptimizing ? 'Optimizing...' : 'Optimize Parameters'}</Button><Button onClick={() => setIsAutoBacktesting(!isAutoBacktesting)} variant="outline" className="w-full mt-2"><Clock className="w-4 h-4 mr-2" /> {isAutoBacktesting ? 'Stop Scheduler' : 'Schedule Backtests'}</Button></motion.div></TabsContent>
-                <TabsContent value="ai-explorer" asChild><motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}><ChatAssistantWrapper strategy={strategy} backtestResult={backtestResult} /></motion.div></TabsContent>
-              </Tabs>
-            </aside>
+      <main>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="py-8 md:py-10 lg:py-12">
+            <ErrorBoundary fallbackRender={ErrorFallback}>
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <div className="lg:col-span-8 space-y-6">
+                  <Card className="shadow-soft rounded-2xl">
+                    <CardHeader><CardTitle>Market Data</CardTitle></CardHeader>
+                    <CardContent className="flex flex-col sm:flex-row gap-4">
+                      <div className="flex-1"><Select value={exchange} onValueChange={setExchange}><SelectTrigger><SelectValue placeholder="Select Exchange" /></SelectTrigger><SelectContent><SelectItem value="binance">Binance</SelectItem><SelectItem value="coinbasepro">Coinbase Pro</SelectItem><SelectItem value="kraken">Kraken</SelectItem></SelectContent></Select></div>
+                      <div className="flex-1"><Select value={symbol} onValueChange={setSymbol}><SelectTrigger><SelectValue placeholder="Select Symbol" /></SelectTrigger><SelectContent><SelectItem value="BTC/USDT">BTC/USDT</SelectItem><SelectItem value="ETH/USDT">ETH/USDT</SelectItem><SelectItem value="SOL/USDT">SOL/USDT</SelectItem></SelectContent></Select></div>
+                      <CsvUploader onDataLoaded={setCandles} />
+                    </CardContent>
+                  </Card>
+                  <AnimatePresence>{backtestResult && <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}><BacktestSummary metrics={backtestResult.metrics} monteCarlo={monteCarloResult} /></motion.div>}</AnimatePresence>
+                  <Card className="shadow-soft rounded-2xl overflow-hidden">
+                    <CardHeader className="flex flex-row items-center justify-between"><CardTitle>Performance</CardTitle><div className="flex items-center gap-2">{isFetchingData && <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />}<Button variant="outline" size="sm" onClick={handleExport} disabled={!backtestResult}><Download className="w-4 h-4 mr-2" /> Export</Button></div></CardHeader>
+                    <CardContent className="h-[400px] p-0">
+                      {isFetchingData ? <Skeleton className="w-full h-full" /> :
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={backtestResult?.equityCurve ?? candles.map((c, i) => ({ date: new Date(c.timestamp).toLocaleDateString(), value: 10000 + i * 10 }))}>
+                          <defs><linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#F38020" stopOpacity={0.8}/><stop offset="95%" stopColor="#F38020" stopOpacity={0}/></linearGradient></defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                          <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} />
+                          <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} domain={['dataMin', 'dataMax']} />
+                          <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))', borderRadius: 'var(--radius)' }} />
+                          <Area type="monotone" dataKey="value" stroke="#F38020" fillOpacity={1} fill="url(#colorEquity)" name="Equity" />
+                        </AreaChart>
+                      </ResponsiveContainer>}
+                    </CardContent>
+                  </Card>
+                  <Tabs defaultValue="trades" value={activeTab} onValueChange={setActiveTab} role="tablist" aria-label="Trading views"><TabsList><TabsTrigger value="trades">Trades</TabsTrigger><TabsTrigger value="paper-trading">Paper Trading</TabsTrigger><TabsTrigger value="library">Library</TabsTrigger></TabsList>
+                    <AnimatePresence mode="wait">
+                      <motion.div key={activeTab} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.2 }}>
+                        <TabsContent value="trades" forceMount={activeTab === 'trades' ? true : undefined} className={activeTab !== 'trades' ? 'hidden' : ''}><TradeTable trades={backtestResult?.trades || []} /></TabsContent>
+                        <TabsContent value="paper-trading" forceMount={activeTab === 'paper-trading' ? true : undefined} className={activeTab !== 'paper-trading' ? 'hidden' : ''}><PaperTradingMonitor symbol={symbol} exchange={exchange} /></TabsContent>
+                        <TabsContent value="library" forceMount={activeTab === 'library' ? true : undefined} className={activeTab !== 'library' ? 'hidden' : ''}><StrategyLibrary currentStrategy={strategy} onLoadStrategy={setStrategy} /></TabsContent>
+                      </motion.div>
+                    </AnimatePresence>
+                  </Tabs>
+                </div>
+                <aside className="lg:col-span-4 space-y-6">
+                  <Tabs defaultValue="strategy" className="w-full"><TabsList className="grid w-full grid-cols-2"><TabsTrigger value="strategy"><Settings className="w-4 h-4 mr-2" />Strategy</TabsTrigger><TabsTrigger value="ai-explorer"><Bot className="w-4 h-4 mr-2" />AI Explorer</TabsTrigger></TabsList>
+                    <TabsContent value="strategy" asChild><motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}><StrategyCard strategy={strategy} onStrategyChange={setStrategy} onRunBacktest={handleRunBacktest} isLoading={isLoading} /><Button onClick={handleOptimize} disabled={isOptimizing} className="w-full mt-4"><BrainCircuit className="w-4 h-4 mr-2" /> {isOptimizing ? 'Optimizing...' : 'Optimize Parameters'}</Button><Button onClick={() => setIsAutoBacktesting(!isAutoBacktesting)} variant="outline" className="w-full mt-2"><Clock className="w-4 h-4 mr-2" /> {isAutoBacktesting ? 'Stop Scheduler' : 'Schedule Backtests'}</Button></motion.div></TabsContent>
+                    <TabsContent value="ai-explorer" asChild><motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}><ChatAssistantWrapper strategy={strategy} backtestResult={backtestResult} /></motion.div></TabsContent>
+                  </Tabs>
+                </aside>
+              </div>
+            </ErrorBoundary>
           </div>
-        </ErrorBoundary>
-      </div></div>
+        </div>
+      </main>
       <Toaster />
     </div>
   );

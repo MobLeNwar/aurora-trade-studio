@@ -27,6 +27,32 @@ export function coreRoutes(app: Hono<{ Bindings: Env }>) {
     });
 }
 export function userRoutes(app: Hono<{ Bindings: Env }>) {
+    app.post('/api/fetch-data', async (c) => {
+        try {
+            const { exchange: ex, symbol, timeframe = '1h', limit = 500 } = await c.req.json();
+            const ccxtModule = await import('ccxt');
+            const ExchangeClass = (ccxtModule as any)[ex];
+            if (!ExchangeClass) {
+                return c.json({ success: false, error: 'Invalid exchange' }, 400);
+            }
+            const exchangeInstance = new ExchangeClass({
+                rateLimit: 1200,
+                enableRateLimit: true,
+                options: { defaultType: 'spot', adjustForTimeDifference: true }
+            });
+            const ohlcv = await exchangeInstance.fetchOHLCV(symbol, timeframe, undefined, limit, {
+                headers: { 'User-Agent': 'AuroraTradeStudio/1.0' }
+            });
+            if (!ohlcv || ohlcv.length < 100) {
+                return c.json({ success: false, error: 'Insufficient data' }, 400);
+            }
+            const candles = ohlcv.map(([ts, o, h, l, c, v]: number[]) => ({ timestamp: ts, open: o, high: h, low: l, close: c, volume: v }));
+            return c.json({ success: true, data: candles });
+        } catch (error: any) {
+            console.error('Proxy fetch error:', error);
+            return c.json({ success: false, error: error.message }, 500);
+        }
+    });
     app.get('/api/sessions', async (c) => {
         try {
             const controller = getAppController(c.env);

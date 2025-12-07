@@ -1,5 +1,5 @@
 import { SMA, RSI } from 'technicalindicators';
-
+import sampleData from '@/pages/TradingSimulatorData.json';
 export interface Candle { timestamp: number; open: number; high: number; low: number; close: number; volume: number; }
 export interface Strategy {
   type: 'sma-cross' | 'rsi-filter';
@@ -12,26 +12,51 @@ export interface BacktestResult { trades: Trade[]; metrics: BacktestMetrics; equ
 export interface MonteCarloResult { meanPnl: number; stdDev: number; pnlDistribution: number[]; worstDrawdown: number; var95: number; confidenceInterval: [number, number]; }
 let lastFetchedData: Candle[] = [];
 export async function fetchHistoricalData({ exchange = 'binance', symbol = 'BTC/USDT', timeframe = '1h', limit = 500 }: { exchange?: string; symbol?: string; timeframe?: string; limit?: number }): Promise<Candle[] | null> {
+  const cacheKey = `historical-${exchange}-${symbol}-${timeframe}-${limit}`;
   try {
-    const ccxtModule: any = await new Function("return import('ccxt')")();
-    const ExchangeClass = (ccxtModule as any)?.[exchange];
-    if (!ExchangeClass) throw new Error(`Exchange ${exchange} not found in ccxt module`);
-    const exchangeInstance: any = new ExchangeClass();
-    const ohlcv = await exchangeInstance.fetchOHLCV(symbol, timeframe, undefined, limit);
-    if (!ohlcv || ohlcv.length < 100) {
-      throw new Error(`Insufficient data received from ${exchange}. Got ${ohlcv?.length || 0} candles.`);
+    const cachedItem = localStorage.getItem(cacheKey);
+    if (cachedItem) {
+      const { data, timestamp } = JSON.parse(cachedItem);
+      if (Date.now() - timestamp < 3600000 && Array.isArray(data) && data.length >= 100) {
+        console.log(`Using cached data for ${symbol}`);
+        lastFetchedData = data;
+        return data;
+      }
     }
-    const candles = ohlcv.map(([timestamp, open, high, low, close, volume]: number[]) => ({ timestamp, open, high, low, close, volume }));
-    lastFetchedData = candles;
-    return candles;
+  } catch (e) {
+    console.warn('Failed to read from cache', e);
+  }
+  try {
+    const response = await fetch('/api/fetch-data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ exchange, symbol, timeframe, limit }),
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: `HTTP Error: ${response.status}` }));
+      throw new Error(errorData.error || 'Failed to fetch data from proxy');
+    }
+    const proxyData = await response.json();
+    if (proxyData.success && Array.isArray(proxyData.data) && proxyData.data.length >= 100) {
+      const candles = proxyData.data;
+      lastFetchedData = candles;
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify({ data: candles, timestamp: Date.now() }));
+      } catch (e) {
+        console.warn('Failed to write to cache', e);
+      }
+      return candles;
+    } else {
+      throw new Error(proxyData.error || 'Insufficient data from proxy');
+    }
   } catch (error) {
-    console.error(`Failed to fetch data from ${exchange} for ${symbol}:`, error);
+    console.warn(`Failed to fetch data via proxy for ${symbol}:`, error);
     if (lastFetchedData.length >= 100) {
-      console.warn('Using cached data due to fetch failure.');
+      console.warn('Using last successfully fetched data due to failure.');
       return lastFetchedData;
     }
-    console.error('No valid cached data available.');
-    return null;
+    console.warn('Using sample fallback data due to fetch failure.');
+    return sampleData as Candle[];
   }
 }
 export async function fetchLivePrice({ exchange = 'binance', symbol = 'BTC/USDT' }: { exchange?: string; symbol?: string }): Promise<number | null> {
@@ -184,7 +209,6 @@ export function parseCsvData(csvString: string): Candle[] {
     return { timestamp: ts, open: parseFloat(open), high: parseFloat(high), low: parseFloat(low), close: parseFloat(close), volume: parseFloat(volume) };
   }).filter(c => !isNaN(c.timestamp) && !isNaN(c.close));
 }
-
 /**
  * Perform a simple grid-search over numeric parameter ranges and return the Strategy
  * with the best found params according to runBacktest using metrics.sharpeRatio (higher is better).
@@ -197,7 +221,6 @@ export function parseCsvData(csvString: string): Candle[] {
 export function optimizeParams(strategy: Strategy, paramRanges: Record<string, number[]>, candles: Candle[]): Strategy {
   const keys = Object.keys(paramRanges);
   if (keys.length === 0) return strategy;
-
   // Build combinations (cartesian product) of the provided ranges.
   let combos: number[][] = [[]];
   for (const k of keys) {
@@ -212,13 +235,10 @@ export function optimizeParams(strategy: Strategy, paramRanges: Record<string, n
     }
     combos = next;
   }
-
   // If combos ended up empty (e.g., all ranges empty), return original strategy.
   if (combos.length === 0) return strategy;
-
   let bestStrategy: Strategy = strategy;
   let bestSharpe = -Infinity;
-
   for (const combo of combos) {
     // Create candidate strategy by cloning to avoid mutating the original
     const candidate: Strategy = {
@@ -226,7 +246,6 @@ export function optimizeParams(strategy: Strategy, paramRanges: Record<string, n
       params: { ...strategy.params },
       risk: { ...strategy.risk },
     };
-
     // Apply combo values to candidate
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
@@ -243,7 +262,6 @@ export function optimizeParams(strategy: Strategy, paramRanges: Record<string, n
         (candidate.params as any)[key] = value;
       }
     }
-
     // Evaluate candidate safely
     try {
       const result = runBacktest(candidate, candles);
@@ -257,6 +275,5 @@ export function optimizeParams(strategy: Strategy, paramRanges: Record<string, n
       continue;
     }
   }
-
   return bestStrategy;
 }

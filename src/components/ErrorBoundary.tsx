@@ -1,82 +1,62 @@
-import React, { Component, ErrorInfo, ReactNode } from "react";
-import { errorReporter } from "@/lib/errorReporter";
-import { ErrorFallback } from "./ErrorFallback";
-
+import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { errorReporter } from '@/lib/errorReporter';
+import { Button } from '@/components/ui/button';
 interface Props {
   children: ReactNode;
-  fallback?: (
-    error: Error,
-    errorInfo: ErrorInfo,
-    retry: () => void
-  ) => ReactNode;
 }
-
 interface State {
   hasError: boolean;
-  error: Error | null;
-  errorInfo: ErrorInfo | null;
+  error?: Error;
 }
-
-export class ErrorBoundary extends Component<Props, State> {
-  public state: State = {
-    hasError: false,
-    error: null,
-    errorInfo: null,
-  };
-
+class ErrorBoundary extends Component<Props, State> {
+  constructor(props: Props) {
+    super(props);
+    this.state = { hasError: false, error: undefined };
+  }
   public static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, error, errorInfo: null };
+    return { hasError: true, error };
   }
-
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    // Update state with error info
-    this.setState({ errorInfo });
-
-    // Report error to backend
-    errorReporter.report({
-      message: error.message,
-      stack: error.stack || "",
-      componentStack: errorInfo.componentStack,
-      errorBoundary: true,
-      errorBoundaryProps: {
-        componentName: this.constructor.name,
-      },
-      url: window.location.href,
-      timestamp: new Date().toISOString(),
-      level: "error",
-    });
+    console.error('ErrorBoundary caught an error:', error, errorInfo);
+    try {
+      errorReporter.report({
+        message: error.message,
+        stack: error.stack || '',
+        componentStack: errorInfo.componentStack,
+        url: window.location.href,
+        timestamp: new Date().toISOString(),
+        source: 'react-error-boundary',
+        error: error,
+        level: 'error',
+      });
+    } catch (reportError) {
+      console.error('Failed to report error:', reportError);
+    }
   }
-
-  private retry = () => {
-    this.setState({ hasError: false, error: null, errorInfo: null });
-    // Reload the page to ensure clean state
-    window.location.reload();
-  };
-
-  private goHome = () => {
-    window.location.href = "/";
-  };
-
   public render() {
-    if (this.state.hasError && this.state.error) {
-      if (this.props.fallback) {
-        return this.props.fallback(
-          this.state.error,
-          this.state.errorInfo!,
-          this.retry
-        );
-      }
-
-      // Use shared ErrorFallback component
+    if (this.state.hasError) {
       return (
-        <ErrorFallback
-          error={this.state.error}
-          onRetry={this.retry}
-          onGoHome={this.goHome}
-        />
+        <div role="alert" className="flex flex-col items-center justify-center min-h-screen p-8 text-center bg-background">
+          <div className="max-w-md w-full bg-card p-8 rounded-2xl shadow-soft border border-destructive/20">
+            <h2 className="text-2xl font-bold text-destructive-foreground font-display">
+              Application Error
+            </h2>
+            <p className="mt-2 text-muted-foreground">
+              Something went wrong. Please try refreshing the page.
+            </p>
+            {this.state.error && (
+              <pre className="text-xs my-4 p-3 bg-destructive/10 text-destructive-foreground rounded-md text-left overflow-auto max-h-40">
+                {this.state.error.message}
+              </pre>
+            )}
+            <Button onClick={() => this.setState({ hasError: false, error: undefined })}>
+              Try again
+            </Button>
+          </div>
+        </div>
       );
     }
-
     return this.props.children;
   }
 }
+export { ErrorBoundary };
