@@ -80,7 +80,7 @@ function runSetupCommands() {
     const commands = [
     "bun add technicalindicators@^3.1.0",
     "bun install technicalindicators@3.1.0",
-    "bun add ccxt@^4.3.0"
+    "bun add ccxt@^4.3.0 @alpacahq/alpaca-trade-api@^3.0.0"
 ];
     
     if (commands.length === 0) {
