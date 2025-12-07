@@ -78,7 +78,8 @@ function updateWranglerJsonc() {
 
 function runSetupCommands() {
     const commands = [
-    "bun add technicalindicators@^3.1.0"
+    "bun add technicalindicators@^3.1.0",
+    "bun install technicalindicators@3.1.0"
 ];
     
     if (commands.length === 0) {
