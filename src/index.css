@@ -87,90 +87,11 @@
   }
 }
 @layer components {
-  /* Button System */
-  .btn {
-    @apply inline-flex items-center justify-center px-4 py-2 text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50;
+  .alert-high-risk {
+    @apply bg-destructive/10 text-destructive-foreground border-destructive/20 rounded-lg p-3;
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
-  .btn-gradient {
-    @apply btn text-white shadow-primary hover:shadow-glow hover:scale-105 active:scale-95;
-    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--secondary)) 100%);
-  }
-  /* Gradient System */
-  .bg-gradient-primary {
-    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--secondary)) 100%);
-  }
-  .bg-gradient-rainbow {
-    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--secondary)) 50%, hsl(var(--accent)) 100%);
-  }
-  /* Text System */
-  .text-gradient {
-    background: linear-gradient(90deg, hsl(var(--primary)) 0%, hsl(var(--secondary)) 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-  .text-pretty {
-    text-wrap: pretty;
-  }
-  /* Glass Morphism */
-  .glass {
-    @apply bg-white/10 backdrop-blur-md border border-white/20 shadow-glass;
-  }
-  .glass-dark {
-    @apply bg-black/10 backdrop-blur-md border border-white/10 shadow-glass;
-  }
-  /* Interactive Effects */
-  .floating {
-    animation: float 2s ease-in-out infinite;
-  }
-  .rotating {
-    animation: rotate 2s ease-in-out infinite;
-  }
-  @keyframes float {
-    0%, 100% {
-      transform: translateY(-4px);
-    }
-    50% {
-      transform: translateY(4px);
-    }
-  }
-  @keyframes rotate {
-    0% {
-      transform: rotate(0deg);
-    }
-    100% {
-      transform: rotate(360deg);
-    }
-  }
-  .shimmer-bg {
-    @apply relative overflow-hidden;
-  }
-  .shimmer-bg::before {
-    @apply absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-white/20 to-transparent;
-    content: '';
-  }
-  /* Layout Utilities */
-  .center {
-    @apply flex items-center justify-center;
-  }
-  .center-col {
-    @apply flex flex-col items-center justify-center;
-  }
-  /* Responsive Typography */
-  .text-display {
-    @apply text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-display font-bold leading-tight;
-  }
-  .text-body {
-    @apply text-base sm:text-lg text-muted-foreground leading-relaxed;
-  }
-  /* Trading Visuals */
-  .equity-positive {
-    @apply text-green-500;
-  }
-  .equity-negative {
-    @apply text-red-500;
-  }
-  .chart-highlight {
-    @apply stroke-primary fill-primary/20;
+  .chart-signal {
+    stroke: hsl(var(--primary));
   }
 }

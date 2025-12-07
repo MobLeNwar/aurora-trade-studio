@@ -1,58 +1,20 @@
 import { SMA, RSI } from 'technicalindicators';
-export interface Candle {
-  timestamp: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
+export interface Candle { timestamp: number; open: number; high: number; low: number; close: number; volume: number; }
 export interface Strategy {
   type: 'sma-cross' | 'rsi-filter';
   params: { [key: string]: number };
-  risk: {
-    positionSizePercent: number;
-    stopLossPercent: number;
-    slippagePercent: number;
-    feePercent: number;
-  };
+  risk: { positionSizePercent: number; stopLossPercent: number; slippagePercent: number; feePercent: number; trailingStopPercent: number; };
 }
-export interface Trade {
-  entryTime: number;
-  exitTime: number;
-  entryPrice: number;
-  exitPrice: number;
-  pnl: number;
-  pnlPercent: number;
-  type: 'long' | 'short';
-}
-export interface BacktestMetrics {
-  netProfit: number;
-  winRate: number;
-  totalTrades: number;
-  profitFactor: number;
-  maxDrawdown: number;
-  sharpeRatio?: number; // Optional for optimization
-}
-export interface BacktestResult {
-  trades: Trade[];
-  metrics: BacktestMetrics;
-  equityCurve: { date: string; value: number }[];
-  indicatorSeries: { [key: string]: (number | undefined)[] };
-}
-export interface MonteCarloResult {
-  meanPnl: number;
-  stdDev: number;
-  pnlDistribution: number[];
-  worstDrawdown: number;
-  confidenceInterval: { lower: number; upper: number };
-}
+export interface Trade { entryTime: number; exitTime: number; entryPrice: number; exitPrice: number; pnl: number; pnlPercent: number; type: 'long' | 'short'; }
+export interface BacktestMetrics { netProfit: number; winRate: number; totalTrades: number; profitFactor: number; maxDrawdown: number; sharpeRatio: number; }
+export interface BacktestResult { trades: Trade[]; metrics: BacktestMetrics; equityCurve: { date: string; value: number }[]; indicatorSeries: { [key: string]: (number | undefined)[] }; }
+export interface MonteCarloResult { meanPnl: number; stdDev: number; pnlDistribution: number[]; worstDrawdown: number; var95: number; }
 export function runBacktest(strategy: Strategy, candles: Candle[]): BacktestResult {
   let equity = 10000;
   const initialEquity = equity;
-  const equityCurve: { date: string; value: number }[] = [{ date: new Date(candles[0].timestamp).toLocaleDateString(), value: equity }];
+  const equityCurve = [{ date: new Date(candles[0].timestamp).toLocaleDateString(), value: equity }];
   const trades: Trade[] = [];
-  let position: { entryPrice: number; type: 'long' | 'short'; entryTime: number } | null = null;
+  let position: { entryPrice: number; type: 'long' | 'short'; entryTime: number; virtualStop: number; } | null = null;
   let peakEquity = equity;
   let maxDrawdown = 0;
   const closePrices = candles.map(c => c.close);
@@ -73,24 +35,20 @@ export function runBacktest(strategy: Strategy, candles: Candle[]): BacktestResu
     const netPnl = pnl - fee;
     const pnlPercent = netPnl / position.entryPrice;
     equity += equity * (strategy.risk.positionSizePercent / 100) * pnlPercent;
-    trades.push({
-      entryTime: position.entryTime,
-      exitTime: exitTime,
-      entryPrice: position.entryPrice,
-      exitPrice: finalExitPrice,
-      pnl: netPnl,
-      pnlPercent: pnlPercent,
-      type: position.type,
-    });
+    trades.push({ entryTime: position.entryTime, exitTime, entryPrice: position.entryPrice, exitPrice: finalExitPrice, pnl: netPnl, pnlPercent, type: position.type });
     position = null;
-  };
-  const openPosition = (time: number, price: number, type: 'long' | 'short') => {
-    const slippage = price * (strategy.risk.slippagePercent / 100);
-    const entryPrice = type === 'long' ? price + slippage : price - slippage;
-    position = { entryPrice, type, entryTime: time };
   };
   for (let i = 1; i < candles.length; i++) {
     const candle = candles[i];
+    if (position) {
+      if (position.type === 'long') {
+        position.virtualStop = Math.max(position.virtualStop, candle.high * (1 - (strategy.risk.trailingStopPercent / 100)));
+        if (candle.low <= position.virtualStop) closePosition(candle.timestamp, position.virtualStop);
+      } else {
+        position.virtualStop = Math.min(position.virtualStop, candle.low * (1 + (strategy.risk.trailingStopPercent / 100)));
+        if (candle.high >= position.virtualStop) closePosition(candle.timestamp, position.virtualStop);
+      }
+    }
     let signal: 'buy' | 'sell' | null = null;
     if (strategy.type === 'sma-cross') {
       const smaShort = indicatorSeries.smaShort?.[i - strategy.params.shortPeriod];
@@ -101,58 +59,40 @@ export function runBacktest(strategy: Strategy, candles: Candle[]): BacktestResu
         if (prevSmaShort <= prevSmaLong && smaShort > smaLong) signal = 'buy';
         if (prevSmaShort >= prevSmaLong && smaShort < smaLong) signal = 'sell';
       }
-    } else if (strategy.type === 'rsi-filter') {
-      const rsiVal = indicatorSeries.rsi?.[i - strategy.params.rsiPeriod];
-      const smaVal = indicatorSeries.sma?.[i - strategy.params.smaPeriod];
-      if (rsiVal && smaVal) {
-        if (candle.close > smaVal && rsiVal < strategy.params.rsiLower) signal = 'buy';
-        if (candle.close < smaVal && rsiVal > strategy.params.rsiUpper) signal = 'sell';
-      }
     }
     if (position) {
-      const pnlPercent = position.type === 'long'
-        ? (candle.low - position.entryPrice) / position.entryPrice
-        : (position.entryPrice - candle.high) / position.entryPrice;
-      if (pnlPercent * 100 < -strategy.risk.stopLossPercent) {
-        const exitPrice = position.entryPrice * (1 - (strategy.risk.stopLossPercent / 100) * (position.type === 'long' ? 1 : -1));
-        closePosition(candle.timestamp, exitPrice);
-      } else if (position.type === 'long' && signal === 'sell') {
-        closePosition(candle.timestamp, candle.open);
-      } else if (position.type === 'short' && signal === 'buy') {
-        closePosition(candle.timestamp, candle.open);
-      }
-    } else {
-      if (signal === 'buy') {
-        openPosition(candle.timestamp, candle.open, 'long');
-      }
+      if ((position.type === 'long' && signal === 'sell') || (position.type === 'short' && signal === 'buy')) closePosition(candle.timestamp, candle.open);
+    } else if (signal) {
+      const slippage = candle.open * (strategy.risk.slippagePercent / 100);
+      const entryPrice = signal === 'buy' ? candle.open + slippage : candle.open - slippage;
+      const stopPrice = entryPrice * (1 - (strategy.risk.stopLossPercent / 100) * (signal === 'buy' ? 1 : -1));
+      position = { entryPrice, type: signal === 'buy' ? 'long' : 'short', entryTime: candle.timestamp, virtualStop: stopPrice };
     }
     equityCurve.push({ date: new Date(candle.timestamp).toLocaleDateString(), value: equity });
     if (equity > peakEquity) peakEquity = equity;
     const drawdown = (peakEquity - equity) / peakEquity;
     if (drawdown > maxDrawdown) maxDrawdown = drawdown;
   }
-  const winningTrades = trades.filter(t => t.pnl > 0).length;
-  const grossProfit = trades.filter(t => t.pnl > 0).reduce((sum, t) => sum + t.pnl, 0);
-  const grossLoss = Math.abs(trades.filter(t => t.pnl <= 0).reduce((sum, t) => sum + t.pnl, 0));
+  const returns = trades.map(t => t.pnlPercent);
+  const avgReturn = returns.reduce((a, b) => a + b, 0) / (returns.length || 1);
+  const stdDev = Math.sqrt(returns.map(r => Math.pow(r - avgReturn, 2)).reduce((a, b) => a + b, 0) / (returns.length || 1));
+  const sharpeRatio = stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(252) : 0; // Assuming daily data
   const metrics: BacktestMetrics = {
     netProfit: equity - initialEquity,
-    winRate: trades.length > 0 ? winningTrades / trades.length : 0,
+    winRate: trades.length > 0 ? trades.filter(t => t.pnl > 0).length / trades.length : 0,
     totalTrades: trades.length,
-    profitFactor: grossLoss > 0 ? grossProfit / grossLoss : Infinity,
-    maxDrawdown: maxDrawdown,
+    profitFactor: Math.abs(trades.filter(t => t.pnl <= 0).reduce((s, t) => s + t.pnl, 0)) > 0 ? trades.filter(t => t.pnl > 0).reduce((s, t) => s + t.pnl, 0) / Math.abs(trades.filter(t => t.pnl <= 0).reduce((s, t) => s + t.pnl, 0)) : Infinity,
+    maxDrawdown,
+    sharpeRatio,
   };
   return { trades, metrics, equityCurve, indicatorSeries };
 }
 export function runMonteCarlo(result: BacktestResult, iterations: number): MonteCarloResult {
-  if (result.trades.length === 0) {
-    return { meanPnl: 0, stdDev: 0, pnlDistribution: [], worstDrawdown: 0, confidenceInterval: { lower: 0, upper: 0 } };
-  }
+  if (result.trades.length === 0) return { meanPnl: 0, stdDev: 0, pnlDistribution: [], worstDrawdown: 0, var95: 0 };
   const pnlDistribution: number[] = [];
   let worstDrawdown = 0;
   for (let i = 0; i < iterations; i++) {
-    let currentEquity = 10000;
-    let peakEquity = currentEquity;
-    let maxDrawdown = 0;
+    let currentEquity = 10000, peakEquity = currentEquity, maxDrawdown = 0;
     const resampledTrades = Array.from({ length: result.trades.length }, () => result.trades[Math.floor(Math.random() * result.trades.length)]);
     for (const trade of resampledTrades) {
       currentEquity *= (1 + trade.pnlPercent);
@@ -166,54 +106,39 @@ export function runMonteCarlo(result: BacktestResult, iterations: number): Monte
   const meanPnl = pnlDistribution.reduce((a, b) => a + b, 0) / iterations;
   const stdDev = Math.sqrt(pnlDistribution.map(x => Math.pow(x - meanPnl, 2)).reduce((a, b) => a + b, 0) / iterations);
   pnlDistribution.sort((a, b) => a - b);
-  const lowerBound = pnlDistribution[Math.floor(iterations * 0.025)];
-  const upperBound = pnlDistribution[Math.floor(iterations * 0.975)];
-  return {
-    meanPnl,
-    stdDev,
-    pnlDistribution,
-    worstDrawdown,
-    confidenceInterval: { lower: lowerBound, upper: upperBound },
-  };
+  const var95 = pnlDistribution[Math.floor(iterations * 0.05)];
+  return { meanPnl, stdDev, pnlDistribution, worstDrawdown, var95 };
 }
-export function optimizeParams(
-  baseStrategy: Strategy,
-  paramRanges: { [key: string]: number[] },
-  candles: Candle[]
-): Strategy {
+export function optimizeParams(baseStrategy: Strategy, paramRanges: { [key: string]: number[] }, candles: Candle[]): Strategy {
   let bestStrategy = baseStrategy;
-  let bestProfitFactor = -Infinity;
+  let bestSharpe = -Infinity;
   const paramKeys = Object.keys(paramRanges);
   const combinations = paramKeys.reduce((acc, key) => {
     const newAcc: any[] = [];
-    acc.forEach(existingCombo => {
+    (acc.length ? acc : [{}]).forEach(existingCombo => {
       paramRanges[key].forEach(value => {
-        newAcc.push({ ...existingCombo, [key]: value });
+        const newCombo = { ...existingCombo };
+        if (key in baseStrategy.params) newCombo.params = { ...(newCombo.params || {}), [key]: value };
+        else if (key in baseStrategy.risk) newCombo.risk = { ...(newCombo.risk || {}), [key]: value };
+        newAcc.push(newCombo);
       });
     });
     return newAcc;
-  }, [{}]);
-  for (const params of combinations) {
-    const currentStrategy = { ...baseStrategy, params };
+  }, []);
+  for (const combo of combinations) {
+    const currentStrategy = { ...baseStrategy, params: { ...baseStrategy.params, ...combo.params }, risk: { ...baseStrategy.risk, ...combo.risk } };
     const result = runBacktest(currentStrategy, candles);
-    if (result.metrics.profitFactor > bestProfitFactor) {
-      bestProfitFactor = result.metrics.profitFactor;
+    if (result.metrics.sharpeRatio > bestSharpe) {
+      bestSharpe = result.metrics.sharpeRatio;
       bestStrategy = currentStrategy;
     }
   }
   return bestStrategy;
 }
 export function parseCsvData(csvString: string): Candle[] {
-  const rows = csvString.trim().split('\n').slice(1); // Skip header
+  const rows = csvString.trim().split('\n').slice(1);
   return rows.map(row => {
     const [timestamp, open, high, low, close, volume] = row.split(',');
-    return {
-      timestamp: new Date(timestamp).getTime(),
-      open: parseFloat(open),
-      high: parseFloat(high),
-      low: parseFloat(low),
-      close: parseFloat(close),
-      volume: parseFloat(volume),
-    };
+    return { timestamp: new Date(timestamp).getTime(), open: parseFloat(open), high: parseFloat(high), low: parseFloat(low), close: parseFloat(close), volume: parseFloat(volume) };
   }).filter(c => !isNaN(c.timestamp) && !isNaN(c.close));
 }

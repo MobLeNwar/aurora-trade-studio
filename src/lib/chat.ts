@@ -1,4 +1,5 @@
-import type { Message, ChatState, ToolCall, WeatherResult, MCPResult, ErrorResult, SessionInfo } from '../../worker/types';
+import { format } from 'date-fns';
+import type { Message, ChatState, ToolCall, SessionInfo } from '../../worker/types';
 import type { Strategy, BacktestResult, MonteCarloResult } from './trading';
 export interface ChatResponse {
   success: boolean;
@@ -10,6 +11,9 @@ export const MODELS = [
   { id: 'google-ai-studio/gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
   { id: 'google-ai-studio/gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
 ];
+export const formatTime = (ts: number) => format(new Date(ts), 'HH:mm');
+export const renderToolCall = (tool: ToolCall) => `${tool.name}(${JSON.stringify(tool.arguments).slice(0, 50)}...)`;
+export const generateSessionTitle = (msg?: string) => msg ? `${msg.slice(0, 40)}... • ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : `Strategy • ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 class ChatService {
   private sessionId: string;
   private baseUrl: string;
@@ -30,11 +34,7 @@ class ChatService {
       throw error;
     }
   }
-  async sendMessage(
-    message: string,
-    model?: string,
-    onChunk?: (chunk: string) => void
-  ): Promise<ChatResponse> {
+  async sendMessage(message: string, model?: string, onChunk?: (chunk: string) => void): Promise<ChatResponse> {
     try {
       const response = await this.fetchApi(`${this.baseUrl}/chat`, {
         method: 'POST',
@@ -64,9 +64,7 @@ class ChatService {
       return { success: false, error: 'Failed to load messages' };
     }
   }
-  getSessionId(): string {
-    return this.sessionId;
-  }
+  getSessionId(): string { return this.sessionId; }
   newSession(): void {
     this.sessionId = crypto.randomUUID();
     this.baseUrl = `/api/chat/${this.sessionId}`;
@@ -103,14 +101,7 @@ class ChatService {
       return { success: false, error: 'Failed to delete session' };
     }
   }
-  async sendWithContext(
-    message: string,
-    strategy: Strategy,
-    backtestResult: BacktestResult | null,
-    monteCarloResult: MonteCarloResult | null,
-    model?: string,
-    onChunk?: (chunk: string) => void
-  ): Promise<ChatResponse> {
+  async sendWithContext(message: string, strategy: Strategy, backtestResult: BacktestResult | null, monteCarloResult: MonteCarloResult | null, model?: string, onChunk?: (chunk: string) => void): Promise<ChatResponse> {
     const context = `
       Current Strategy:
       - Type: ${strategy.type}
@@ -120,10 +111,9 @@ class ChatService {
       - ${backtestResult ? `Net Profit: ${backtestResult.metrics.netProfit.toFixed(2)}, Win Rate: ${(backtestResult.metrics.winRate * 100).toFixed(2)}%, Trades: ${backtestResult.metrics.totalTrades}, Max Drawdown: ${(backtestResult.metrics.maxDrawdown * 100).toFixed(2)}%` : 'No backtest run yet.'}
       Monte Carlo Simulation:
       - ${monteCarloResult ? `Mean PnL: ${monteCarloResult.meanPnl.toFixed(2)}, Worst Drawdown: ${(monteCarloResult.worstDrawdown * 100).toFixed(2)}%` : 'Not run yet.'}
-      Recent Trades:
-      - ${backtestResult && backtestResult.trades.length > 0 ? JSON.stringify(backtestResult.trades.slice(-3)) : 'No trades.'}
       User Query: ${message}
     `;
+    console.log("Sending context to AI:", context);
     return this.sendMessage(context, model, onChunk);
   }
 }

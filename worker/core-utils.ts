@@ -4,6 +4,7 @@
  */
 import type { AppController } from './app-controller';
 import type { ChatAgent } from './agent';
+import type { SessionInfo } from './types';
 export interface Env {
     CF_AI_BASE_URL: string;
     CF_AI_API_KEY: string;
@@ -12,7 +13,6 @@ export interface Env {
     CHAT_AGENT: DurableObjectNamespace<ChatAgent>;
     APP_CONTROLLER: DurableObjectNamespace<AppController>;
 }
-
 /**
  * Get AppController stub for session management
  * Uses a singleton pattern with fixed ID for consistent routing
@@ -21,21 +21,19 @@ export function getAppController(env: Env): DurableObjectStub<AppController> {
   const id = env.APP_CONTROLLER.idFromName("controller");
   return env.APP_CONTROLLER.get(id);
 }
-
 /**
  * Register a new chat session with the control plane
  * Called automatically when a new ChatAgent is created
  */
-export async function registerSession(env: Env, sessionId: string, title?: string): Promise<void> {
+export async function registerSession(env: Env, sessionId: string, title?: string, metadata?: Partial<SessionInfo>): Promise<void> {
   try {
     const controller = getAppController(env);
-    await controller.addSession(sessionId, title);
+    await controller.addSession(sessionId, title, metadata);
   } catch (error) {
     console.error('Failed to register session:', error);
     // Don't throw - session should work even if registration fails
   }
 }
-
 /**
  * Update session activity timestamp
  * Called when a session receives messages
@@ -49,7 +47,6 @@ export async function updateSessionActivity(env: Env, sessionId: string): Promis
     // Don't throw - this is non-critical
   }
 }
-
 /**
  * Unregister a session from the control plane
  * Called when a session is explicitly deleted

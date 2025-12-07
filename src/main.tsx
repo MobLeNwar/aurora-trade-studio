@@ -13,6 +13,7 @@ import { RouteErrorBoundary } from '@/components/RouteErrorBoundary';
 import '@/index.css'
 import { HomePage } from '@/pages/HomePage'
 import TradingDashboard from '@/pages/TradingDashboard';
+import SettingsPage from '@/pages/SettingsPage';
 import { Toaster } from '@/components/ui/sonner';
 const queryClient = new QueryClient();
 const router = createBrowserRouter([
@@ -24,6 +25,11 @@ const router = createBrowserRouter([
   {
     path: "/trade",
     element: <TradingDashboard />,
+    errorElement: <RouteErrorBoundary />,
+  },
+  {
+    path: "/settings",
+    element: <SettingsPage />,
     errorElement: <RouteErrorBoundary />,
   },
 ]);
