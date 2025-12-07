@@ -39,7 +39,7 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
     app.post('/api/sessions', async (c) => {
         try {
             const body = await c.req.json().catch(() => ({}));
-            const { title, sessionId: providedSessionId, firstMessage } = body;
+            const { title, sessionId: providedSessionId, firstMessage, config } = body;
             const sessionId = providedSessionId || crypto.randomUUID();
             let sessionTitle = title;
             if (!sessionTitle) {
@@ -47,7 +47,7 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
                     ? `${firstMessage.trim().slice(0, 40)}...`
                     : `Chat ${new Date().toLocaleString()}`;
             }
-            const sessionInfo: Partial<SessionInfo> = {};
+            const sessionInfo: Partial<SessionInfo> = { config };
             try {
                 if (firstMessage && firstMessage.startsWith('{')) {
                     JSON.parse(firstMessage); // Validate JSON
@@ -60,16 +60,16 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
             return c.json({ success: false, error: 'Failed to create session' }, { status: 500 });
         }
     });
-    app.get('/api/sessions/:sessionId/strategy', async (c) => {
+    app.get('/api/sessions/:sessionId', async (c) => {
         try {
             const controller = getAppController(c.env);
             const session = await controller.getSession(c.req.param('sessionId'));
-            if (!session || !session.strategy) {
-                return c.json({ success: false, error: 'Strategy not found' }, { status: 404 });
+            if (!session) {
+                return c.json({ success: false, error: 'Session not found' }, { status: 404 });
             }
-            return c.json({ success: true, data: JSON.parse(session.strategy) });
+            return c.json({ success: true, data: session });
         } catch (error) {
-            return c.json({ success: false, error: 'Failed to retrieve strategy' }, { status: 500 });
+            return c.json({ success: false, error: 'Failed to retrieve session' }, { status: 500 });
         }
     });
     app.delete('/api/sessions/:sessionId', async (c) => {
@@ -81,5 +81,13 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
         } catch (error) {
             return c.json({ success: false, error: 'Failed to delete session' }, { status: 500 });
         }
+    });
+    app.get('/api/alpaca-config', (c) => {
+        return c.json({
+            success: true,
+            data: {
+                configured: !!(c.env.ALPACA_API_KEY && c.env.ALPACA_SECRET_KEY)
+            }
+        });
     });
 }

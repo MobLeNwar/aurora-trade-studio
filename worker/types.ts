@@ -37,6 +37,7 @@ export interface SessionInfo {
   createdAt: number;
   lastActive: number;
   strategy?: string; // JSON string of the strategy
+  config?: { symbol: string; exchange: string };
 }
 export interface Tool {
   name: string;

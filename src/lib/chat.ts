@@ -7,9 +7,10 @@ export interface ChatResponse {
   error?: string;
 }
 export const MODELS = [
+  { id: 'nim/meta/llama-3.1-70b-instruct', name: 'NVIDIA Llama 3.1 70B' },
+  { id: 'nim/mistralai/mistral-nemo-12b-instruct', name: 'NVIDIA Mistral Nemo 12B' },
   { id: 'google-ai-studio/gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
   { id: 'google-ai-studio/gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
-  { id: 'google-ai-studio/gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
 ];
 export const formatTime = (ts: number) => format(new Date(ts), 'HH:mm');
 export const renderToolCall = (tool: ToolCall) => `${tool.name}(${JSON.stringify(tool.arguments).slice(0, 50)}...)`;
@@ -24,6 +25,9 @@ class ChatService {
   private async fetchApi(url: string, options?: RequestInit): Promise<any> {
     try {
       const response = await fetch(url, options);
+      if (response.status === 429) {
+        throw new Error('Rate limit exceeded. Please try again in a moment.');
+      }
       if (!response.ok) {
         const errorBody = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
         throw new Error(errorBody.error || `HTTP ${response.status}`);
@@ -36,6 +40,9 @@ class ChatService {
   }
   async sendMessage(message: string, model?: string, onChunk?: (chunk: string) => void): Promise<ChatResponse> {
     try {
+      if (model?.startsWith('nim/')) {
+        console.log(`NIM Query sent: ${message}`);
+      }
       const response = await this.fetchApi(`${this.baseUrl}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -73,12 +80,12 @@ class ChatService {
     this.sessionId = sessionId;
     this.baseUrl = `/api/chat/${this.sessionId}`;
   }
-  async createSession(title?: string, sessionId?: string, firstMessage?: string): Promise<{ success: boolean; data?: { sessionId: string; title: string }; error?: string }> {
+  async createSession(title?: string, sessionId?: string, firstMessage?: string, config?: { symbol: string; exchange: string }): Promise<{ success: boolean; data?: { sessionId: string; title: string }; error?: string }> {
     try {
       const response = await this.fetchApi('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, sessionId, firstMessage })
+        body: JSON.stringify({ title, sessionId, firstMessage, config })
       });
       return await response.json();
     } catch (error) {
@@ -91,6 +98,14 @@ class ChatService {
       return await response.json();
     } catch (error) {
       return { success: false, error: 'Failed to list sessions' };
+    }
+  }
+  async getSession(sessionId: string): Promise<{ success: boolean; data?: SessionInfo; error?: string }> {
+    try {
+      const response = await this.fetchApi(`/api/sessions/${sessionId}`);
+      return await response.json();
+    } catch (error) {
+      return { success: false, error: 'Failed to get session' };
     }
   }
   async deleteSession(sessionId: string): Promise<{ success: boolean; error?: string }> {
@@ -113,7 +128,6 @@ class ChatService {
       - ${monteCarloResult ? `Mean PnL: ${monteCarloResult.meanPnl.toFixed(2)}, Worst Drawdown: ${(monteCarloResult.worstDrawdown * 100).toFixed(2)}%` : 'Not run yet.'}
       User Query: ${message}
     `;
-    console.log("Sending context to AI:", context);
     return this.sendMessage(context, model, onChunk);
   }
 }

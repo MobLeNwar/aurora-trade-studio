@@ -1,4 +1,5 @@
 import { SMA, RSI } from 'technicalindicators';
+import * as ccxt from 'ccxt';
 export interface Candle { timestamp: number; open: number; high: number; low: number; close: number; volume: number; }
 export interface Strategy {
   type: 'sma-cross' | 'rsi-filter';
@@ -9,7 +10,36 @@ export interface Trade { entryTime: number; exitTime: number; entryPrice: number
 export interface BacktestMetrics { netProfit: number; winRate: number; totalTrades: number; profitFactor: number; maxDrawdown: number; sharpeRatio: number; }
 export interface BacktestResult { trades: Trade[]; metrics: BacktestMetrics; equityCurve: { date: string; value: number }[]; indicatorSeries: { [key: string]: (number | undefined)[] }; }
 export interface MonteCarloResult { meanPnl: number; stdDev: number; pnlDistribution: number[]; worstDrawdown: number; var95: number; }
+let lastFetchedData: Candle[] = [];
+export async function fetchHistoricalData({ exchange = 'binance', symbol = 'BTC/USDT', timeframe = '1h', limit = 500 }: { exchange?: string; symbol?: string; timeframe?: string; limit?: number }): Promise<Candle[] | null> {
+  try {
+    // @ts-ignore
+    const exchangeInstance = new ccxt[exchange]();
+    const ohlcv = await exchangeInstance.fetchOHLCV(symbol, timeframe, undefined, limit);
+    const candles = ohlcv.map(([timestamp, open, high, low, close, volume]: number[]) => ({ timestamp, open, high, low, close, volume }));
+    lastFetchedData = candles;
+    return candles;
+  } catch (error) {
+    console.error(`Failed to fetch data from ${exchange} for ${symbol}:`, error);
+    return lastFetchedData.length > 0 ? lastFetchedData : null; // Fallback to cached data
+  }
+}
+export async function fetchLivePrice({ exchange = 'binance', symbol = 'BTC/USDT' }: { exchange?: string; symbol?: string }): Promise<number | null> {
+  try {
+    // @ts-ignore
+    const exchangeInstance = new ccxt[exchange]();
+    const ticker = await exchangeInstance.fetchTicker(symbol);
+    return ticker.last ?? null;
+  } catch (error) {
+    console.error(`Failed to fetch live price for ${symbol}:`, error);
+    return null;
+  }
+}
 export function runBacktest(strategy: Strategy, candles: Candle[]): BacktestResult {
+  if (!candles || candles.length === 0) {
+    const emptyMetrics: BacktestMetrics = { netProfit: 0, winRate: 0, totalTrades: 0, profitFactor: 0, maxDrawdown: 0, sharpeRatio: 0 };
+    return { trades: [], metrics: emptyMetrics, equityCurve: [], indicatorSeries: {} };
+  }
   let equity = 10000;
   const initialEquity = equity;
   const equityCurve = [{ date: new Date(candles[0].timestamp).toLocaleDateString(), value: equity }];
@@ -139,6 +169,11 @@ export function parseCsvData(csvString: string): Candle[] {
   const rows = csvString.trim().split('\n').slice(1);
   return rows.map(row => {
     const [timestamp, open, high, low, close, volume] = row.split(',');
-    return { timestamp: new Date(timestamp).getTime(), open: parseFloat(open), high: parseFloat(high), low: parseFloat(low), close: parseFloat(close), volume: parseFloat(volume) };
+    const ts = new Date(timestamp).getTime();
+    if (isNaN(ts)) { // Handle different date formats
+        const parsedTs = Date.parse(timestamp);
+        if (!isNaN(parsedTs)) return { timestamp: parsedTs, open: parseFloat(open), high: parseFloat(high), low: parseFloat(low), close: parseFloat(close), volume: parseFloat(volume) };
+    }
+    return { timestamp: ts, open: parseFloat(open), high: parseFloat(high), low: parseFloat(low), close: parseFloat(close), volume: parseFloat(volume) };
   }).filter(c => !isNaN(c.timestamp) && !isNaN(c.close));
 }

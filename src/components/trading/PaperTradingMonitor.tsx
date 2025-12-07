@@ -1,96 +1,92 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Play, Pause, TrendingUp, RefreshCw } from 'lucide-react';
+import { Play, Pause, TrendingUp, RefreshCw, AlertTriangle } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { toast } from 'sonner';
-interface Fill {
-  timestamp: number;
-  price: number;
-  size: number;
-  side: 'buy' | 'sell';
-}
-interface Position {
-  entryPrice: number;
-  size: number;
-  pnl: number;
-  peakPrice: number;
-}
-interface Order {
-  id: string;
-  price: number;
-  side: 'buy' | 'sell';
-  type: 'limit' | 'market';
-}
-export function PaperTradingMonitor() {
+import { fetchLivePrice } from '@/lib/trading';
+import Alpaca from '@alpacahq/alpaca-trade-api';
+interface Fill { timestamp: number; price: number; size: number; side: 'buy' | 'sell'; }
+interface Position { entryPrice: number; size: number; pnl: number; peakPrice: number; }
+interface PaperTradingMonitorProps { symbol: string; exchange: string; }
+export function PaperTradingMonitor({ symbol, exchange }: PaperTradingMonitorProps) {
   const [isActive, setIsActive] = useState(false);
   const [fills, setFills] = useState<Fill[]>([]);
   const [position, setPosition] = useState<Position | null>(null);
   const [pnlHistory, setPnlHistory] = useState<{ time: number; pnl: number }[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [isAlpacaConfigured, setIsAlpacaConfigured] = useState(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const lastPrice = useRef(112.0);
-  const trailingStopPercent = 2; // Example: 2% trailing stop
-  const resetSimulation = () => {
-    setIsActive(false);
-    setFills([]);
-    setPosition(null);
-    setPnlHistory([]);
-    setOrders([]);
-    lastPrice.current = 112.0;
-    toast.info("Paper trading simulation has been reset.");
-  };
+  const lastPrice = useRef(0);
+  useEffect(() => {
+    const checkConfig = async () => {
+      try {
+        const res = await fetch('/api/alpaca-config');
+        const data = await res.json();
+        if (data.success && data.data.configured) {
+          setIsAlpacaConfigured(true);
+          toast.success("Alpaca paper trading is configured.");
+        } else {
+          toast.warning("Alpaca not configured. Using mock simulation.", {
+            description: "Set ALPACA_API_KEY and ALPACA_SECRET_KEY in your Worker secrets to enable real paper trading."
+          });
+        }
+      } catch (error) {
+        console.error("Failed to check Alpaca config:", error);
+      }
+    };
+    checkConfig();
+  }, []);
+  const updatePriceAndPosition = useCallback(async () => {
+    const newPrice = await fetchLivePrice({ exchange, symbol });
+    if (newPrice === null) return;
+    lastPrice.current = newPrice;
+    if (position) {
+      const newPnl = (newPrice - position.entryPrice) * position.size;
+      setPosition(p => p ? { ...p, pnl: newPnl } : null);
+      setPnlHistory(prev => [...prev.slice(-99), { time: Date.now(), pnl: newPnl }]);
+    }
+  }, [exchange, symbol, position]);
   useEffect(() => {
     if (isActive) {
-      intervalRef.current = setInterval(() => {
-        const priceChange = (Math.random() - 0.5) * 0.5;
-        const newPrice = Math.max(100, lastPrice.current + priceChange);
-        lastPrice.current = newPrice;
-        // Process pending orders
-        const filledOrders: string[] = [];
-        orders.forEach(order => {
-          if ((order.side === 'buy' && newPrice <= order.price) || (order.side === 'sell' && newPrice >= order.price)) {
-            const newFill: Fill = { timestamp: Date.now(), price: newPrice, size: 1, side: order.side };
-            setFills(prev => [newFill, ...prev.slice(0, 49)]);
-            setPosition({ entryPrice: newPrice, size: 1, pnl: 0, peakPrice: newPrice });
-            setPnlHistory([{ time: Date.now(), pnl: 0 }]);
-            toast.success(`Limit ${order.side} order filled at $${newPrice.toFixed(2)}`);
-            filledOrders.push(order.id);
-          }
-        });
-        setOrders(prev => prev.filter(o => !filledOrders.includes(o.id)));
-        // Update position PnL and trailing stop
-        if (position) {
-          const newPnl = (newPrice - position.entryPrice) * position.size;
-          const newPeakPrice = Math.max(position.peakPrice, newPrice);
-          const stopPrice = newPeakPrice * (1 - trailingStopPercent / 100);
-          if (newPrice < stopPrice) {
-            toast.warning(`Trailing stop triggered at $${newPrice.toFixed(2)}`, { description: `Profit of $${newPnl.toFixed(2)} locked in.` });
-            setPosition(null);
-          } else {
-            setPosition({ ...position, pnl: newPnl, peakPrice: newPeakPrice });
-            setPnlHistory(prev => [...prev.slice(-99), { time: Date.now(), pnl: newPnl }]);
-          }
-        }
-      }, 2000);
+      intervalRef.current = setInterval(updatePriceAndPosition, 5000);
     } else {
       if (intervalRef.current) clearInterval(intervalRef.current);
     }
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [isActive, position, orders]);
+  }, [isActive, updatePriceAndPosition]);
+  const resetSimulation = () => {
+    setIsActive(false);
+    setFills([]);
+    setPosition(null);
+    setPnlHistory([]);
+    lastPrice.current = 0;
+    toast.info("Paper trading simulation has been reset.");
+  };
   const placeOrder = (side: 'buy' | 'sell') => {
-    const price = side === 'buy' ? lastPrice.current * 0.995 : lastPrice.current * 1.005;
-    const newOrder: Order = { id: crypto.randomUUID(), price, side, type: 'limit' };
-    setOrders(prev => [...prev, newOrder]);
-    toast.info(`Limit ${side} order placed at $${price.toFixed(2)}`);
+    if (!isAlpacaConfigured) {
+      const price = lastPrice.current || 100;
+      const newFill: Fill = { timestamp: Date.now(), price, size: 1, side };
+      setFills(prev => [newFill, ...prev.slice(0, 49)]);
+      setPosition({ entryPrice: price, size: 1, pnl: 0, peakPrice: price });
+      setPnlHistory([{ time: Date.now(), pnl: 0 }]);
+      toast.success(`Mock ${side} order filled at ${price.toFixed(2)}`);
+      return;
+    }
+    toast.info(`Placing real paper trade via Alpaca for ${side} ${symbol}... (Not implemented)`);
   };
   return (
     <div className="space-y-6">
+      {!isAlpacaConfigured && (
+        <div className="flex items-center gap-3 rounded-lg border border-yellow-500/50 bg-yellow-500/10 p-4 text-yellow-700 dark:text-yellow-300">
+          <AlertTriangle className="h-5 w-5" />
+          <p className="text-sm">You are in mock simulation mode. For real paper trading, configure your Alpaca API keys in settings.</p>
+        </div>
+      )}
       <Card className="shadow-soft rounded-2xl">
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Live Monitor</CardTitle>
@@ -126,12 +122,12 @@ export function PaperTradingMonitor() {
               </ResponsiveContainer>
             </div>
             <div className="flex gap-2">
-              <Button onClick={() => placeOrder('buy')} className="w-full bg-green-600 hover:bg-green-700">Place Buy Limit</Button>
-              <Button onClick={() => placeOrder('sell')} className="w-full bg-red-600 hover:bg-red-700">Place Sell Limit</Button>
+              <Button onClick={() => placeOrder('buy')} className="w-full bg-green-600 hover:bg-green-700">Market Buy</Button>
+              <Button onClick={() => placeOrder('sell')} className="w-full bg-red-600 hover:bg-red-700">Market Sell</Button>
             </div>
           </div>
           <div>
-            <h3 className="text-lg font-semibold mb-2">Order Blotter</h3>
+            <h3 className="text-lg font-semibold mb-2">Fill History</h3>
             <Card className="h-80 overflow-y-auto">
               <Table>
                 <TableHeader><TableRow><TableHead>Time</TableHead><TableHead>Side</TableHead><TableHead className="text-right">Price</TableHead></TableRow></TableHeader>

@@ -8,6 +8,10 @@ import type { SessionInfo } from './types';
 export interface Env {
     CF_AI_BASE_URL: string;
     CF_AI_API_KEY: string;
+    NIM_BASE_URL?: string;
+    NIM_API_KEY?: string;
+    ALPACA_API_KEY?: string;
+    ALPACA_SECRET_KEY?: string;
     SERPAPI_KEY: string;
     OPENROUTER_API_KEY: string;
     CHAT_AGENT: DurableObjectNamespace<ChatAgent>;

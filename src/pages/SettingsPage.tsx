@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Zap, Settings, Save, Trash2, Upload, Download, Share2, Bell, Palette } from 'lucide-react';
+import { Zap, Settings, Save, Trash2, Share2, Bell, Palette, KeyRound, BarChart } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -13,22 +12,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { Toaster, toast } from 'sonner';
 import { chatService } from '@/lib/chat';
-import type { SessionInfo } from '../../../worker/types';
-import type { Strategy } from '@/lib/trading';
-const RiskPresetCard = ({ title, description, onSelect }: { title: string, description: string, onSelect: () => void }) => (
-  <Card className="hover:shadow-md transition-shadow">
-    <CardHeader>
-      <CardTitle>{title}</CardTitle>
-      <CardDescription>{description}</CardDescription>
-    </CardHeader>
-    <CardContent>
-      <Button onClick={onSelect} className="w-full">Apply Preset</Button>
-    </CardContent>
-  </Card>
-);
+import type { SessionInfo } from '../../worker/types';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 export default function SettingsPage() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [notifications, setNotifications] = useState(true);
+  const [symbol, setSymbol] = useState(() => localStorage.getItem('trading-config-symbol') || 'BTC/USDT');
+  const [exchange, setExchange] = useState(() => localStorage.getItem('trading-config-exchange') || 'binance');
   const loadSessions = async () => {
     const response = await chatService.listSessions();
     if (response.success && response.data) {
@@ -48,6 +38,11 @@ export default function SettingsPage() {
     setNotifications(checked);
     localStorage.setItem('aurora-prefs', JSON.stringify({ notifications: checked }));
     toast.success(`Notifications ${checked ? 'enabled' : 'disabled'}.`);
+  };
+  const handleSaveTradingConfig = () => {
+    localStorage.setItem('trading-config-symbol', symbol);
+    localStorage.setItem('trading-config-exchange', exchange);
+    toast.success('Trading configuration saved.');
   };
   const handleDelete = async (sessionId: string, title: string) => {
     const response = await chatService.deleteSession(sessionId);
@@ -86,7 +81,7 @@ export default function SettingsPage() {
             <Tabs defaultValue="sessions" className="mt-8">
               <TabsList className="grid w-full grid-cols-3">
                 <TabsTrigger value="sessions">Sessions</TabsTrigger>
-                <TabsTrigger value="risk">Risk Presets</TabsTrigger>
+                <TabsTrigger value="api">API & Data</TabsTrigger>
                 <TabsTrigger value="prefs">Preferences</TabsTrigger>
               </TabsList>
               <TabsContent value="sessions" className="mt-6">
@@ -124,18 +119,31 @@ export default function SettingsPage() {
                   </CardContent>
                 </Card>
               </TabsContent>
-              <TabsContent value="risk" className="mt-6">
-                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  <RiskPresetCard title="Conservative" description="Low risk, small position sizes, tight stops." onSelect={() => toast.info("Conservative preset applied (mock).")} />
-                  <RiskPresetCard title="Balanced" description="Moderate risk, standard position sizes." onSelect={() => toast.info("Balanced preset applied (mock).")} />
-                  <RiskPresetCard title="Aggressive" description="High risk, larger positions, wider stops." onSelect={() => toast.info("Aggressive preset applied (mock).")} />
-                </div>
+              <TabsContent value="api" className="mt-6 space-y-6">
+                <Card>
+                  <CardHeader><CardTitle className="flex items-center gap-2"><BarChart className="w-5 h-5" /> Market Data</CardTitle><CardDescription>Configure the default market for backtesting and paper trading.</CardDescription></CardHeader>
+                  <CardContent className="space-y-4">
+                    <div><Label htmlFor="exchange">Exchange</Label><Select value={exchange} onValueChange={setExchange}><SelectTrigger id="exchange"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="binance">Binance</SelectItem><SelectItem value="coinbasepro">Coinbase Pro</SelectItem><SelectItem value="kraken">Kraken</SelectItem></SelectContent></Select></div>
+                    <div><Label htmlFor="symbol">Symbol</Label><Input id="symbol" value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="e.g., BTC/USDT" /></div>
+                    <Button onClick={handleSaveTradingConfig}><Save className="w-4 h-4 mr-2" /> Save Data Config</Button>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader><CardTitle className="flex items-center gap-2"><KeyRound className="w-5 h-5" /> Paper Trading (Alpaca)</CardTitle><CardDescription>To enable real paper trading, set your API keys as secrets in your Cloudflare Worker.</CardDescription></CardHeader>
+                  <CardContent className="text-sm text-muted-foreground space-y-2">
+                    <p>1. Go to your Cloudflare Dashboard &gt; Workers & Pages &gt; Select this application.</p>
+                    <p>2. Navigate to Settings &gt; Variables.</p>
+                    <p>3. Add the following secrets:</p>
+                    <ul className="list-disc pl-6 font-mono text-xs">
+                      <li><span className="font-semibold">ALPACA_API_KEY</span>: Your paper trading API Key ID.</li>
+                      <li><span className="font-semibold">ALPACA_SECRET_KEY</span>: Your paper trading Secret Key.</li>
+                    </ul>
+                  </CardContent>
+                </Card>
               </TabsContent>
               <TabsContent value="prefs" className="mt-6">
                 <Card>
-                  <CardHeader>
-                    <CardTitle>Application Preferences</CardTitle>
-                  </CardHeader>
+                  <CardHeader><CardTitle>Application Preferences</CardTitle></CardHeader>
                   <CardContent className="space-y-6">
                     <div className="flex items-center justify-between p-4 border rounded-lg">
                       <div className="space-y-1">
