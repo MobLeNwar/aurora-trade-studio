@@ -13,7 +13,7 @@ export interface MonteCarloResult { meanPnl: number; stdDev: number; pnlDistribu
 let lastFetchedData: Candle[] = [];
 export async function fetchHistoricalData({ exchange = 'binance', symbol = 'BTC/USDT', timeframe = '1h', limit = 500 }: { exchange?: string; symbol?: string; timeframe?: string; limit?: number }): Promise<Candle[] | null> {
   try {
-    // @ts-ignore
+    // @ts-expect-error - ccxt dynamic exchange instantiation
     const exchangeInstance = new ccxt[exchange]();
     const ohlcv = await exchangeInstance.fetchOHLCV(symbol, timeframe, undefined, limit);
     const candles = ohlcv.map(([timestamp, open, high, low, close, volume]: number[]) => ({ timestamp, open, high, low, close, volume }));
@@ -21,12 +21,14 @@ export async function fetchHistoricalData({ exchange = 'binance', symbol = 'BTC/
     return candles;
   } catch (error) {
     console.error(`Failed to fetch data from ${exchange} for ${symbol}:`, error);
-    return lastFetchedData.length > 0 ? lastFetchedData : null; // Fallback to cached data
+    if (lastFetchedData.length > 0) return lastFetchedData; // Fallback to cached data
+    console.error('No cached data available');
+    return null;
   }
 }
 export async function fetchLivePrice({ exchange = 'binance', symbol = 'BTC/USDT' }: { exchange?: string; symbol?: string }): Promise<number | null> {
   try {
-    // @ts-ignore
+    // @ts-expect-error - ccxt dynamic exchange instantiation
     const exchangeInstance = new ccxt[exchange]();
     const ticker = await exchangeInstance.fetchTicker(symbol);
     return ticker.last ?? null;
@@ -50,11 +52,13 @@ export function runBacktest(strategy: Strategy, candles: Candle[]): BacktestResu
   const closePrices = candles.map(c => c.close);
   const indicatorSeries: { [key: string]: (number | undefined)[] } = {};
   if (strategy.type === 'sma-cross') {
-    indicatorSeries.smaShort = SMA.calculate({ period: strategy.params.shortPeriod, values: closePrices });
-    indicatorSeries.smaLong = SMA.calculate({ period: strategy.params.longPeriod, values: closePrices });
+    indicatorSeries.smaShort = SMA.calculate({ period: strategy.params.shortPeriod || 10, values: closePrices });
+    indicatorSeries.smaLong = SMA.calculate({ period: strategy.params.longPeriod || 20, values: closePrices });
   } else if (strategy.type === 'rsi-filter') {
-    indicatorSeries.rsi = RSI.calculate({ period: strategy.params.rsiPeriod, values: closePrices });
-    indicatorSeries.sma = SMA.calculate({ period: strategy.params.smaPeriod, values: closePrices });
+    const rsiPeriod = strategy.params.rsiPeriod || 14;
+    const smaPeriod = strategy.params.smaPeriod || 50;
+    indicatorSeries.rsi = RSI.calculate({ period: rsiPeriod, values: closePrices });
+    indicatorSeries.sma = SMA.calculate({ period: smaPeriod, values: closePrices });
   }
   const closePosition = (exitTime: number, exitPrice: number) => {
     if (!position) return;
@@ -81,10 +85,12 @@ export function runBacktest(strategy: Strategy, candles: Candle[]): BacktestResu
     }
     let signal: 'buy' | 'sell' | null = null;
     if (strategy.type === 'sma-cross') {
-      const smaShort = indicatorSeries.smaShort?.[i - strategy.params.shortPeriod];
-      const smaLong = indicatorSeries.smaLong?.[i - strategy.params.longPeriod];
-      const prevSmaShort = indicatorSeries.smaShort?.[i - strategy.params.shortPeriod - 1];
-      const prevSmaLong = indicatorSeries.smaLong?.[i - strategy.params.longPeriod - 1];
+      const shortPeriod = strategy.params.shortPeriod || 10;
+      const longPeriod = strategy.params.longPeriod || 20;
+      const smaShort = indicatorSeries.smaShort?.[i - shortPeriod];
+      const smaLong = indicatorSeries.smaLong?.[i - longPeriod];
+      const prevSmaShort = indicatorSeries.smaShort?.[i - shortPeriod - 1];
+      const prevSmaLong = indicatorSeries.smaLong?.[i - longPeriod - 1];
       if (smaShort && smaLong && prevSmaShort && prevSmaLong) {
         if (prevSmaShort <= prevSmaLong && smaShort > smaLong) signal = 'buy';
         if (prevSmaShort >= prevSmaLong && smaShort < smaLong) signal = 'sell';

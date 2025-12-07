@@ -43,30 +43,19 @@ export class ChatHandler {
     const isNimModel = this.model.startsWith('nim/') && this.nimClient;
     const activeClient = isNimModel ? this.nimClient! : this.client;
     const modelToUse = isNimModel ? this.model.replace('nim/', '') : this.model;
-    if (isNimModel) {
-      console.log(`Routing to NVIDIA NIM model: ${modelToUse}`);
-    }
-    if (onChunk) {
-      // Use streaming with callback
-      const stream = await activeClient.chat.completions.create({
-        model: modelToUse,
-        messages,
-        tools: toolDefinitions,
-        tool_choice: 'auto',
-        max_tokens: 4096,
-        stream: true,
-      });
-      return this.handleStreamResponse(stream, message, conversationHistory, onChunk);
-    }
-    // Non-streaming response
-    const completion = await activeClient.chat.completions.create({
+    console.log(`Using ${isNimModel ? 'NIM' : 'CF AI Gateway'} for model: ${modelToUse}`);
+    const commonParams = {
       model: modelToUse,
       messages,
       tools: toolDefinitions,
-      tool_choice: 'auto',
+      tool_choice: 'auto' as const,
       max_tokens: 4096,
-      stream: false
-    });
+    };
+    if (onChunk) {
+      const stream = await activeClient.chat.completions.create({ ...commonParams, stream: true });
+      return this.handleStreamResponse(stream, message, conversationHistory, onChunk);
+    }
+    const completion = await activeClient.chat.completions.create({ ...commonParams, stream: false });
     return this.handleNonStreamResponse(completion, message, conversationHistory);
   }
   private async handleStreamResponse(
@@ -84,7 +73,6 @@ export class ChatHandler {
           fullContent += delta.content;
           onChunk(delta.content);
         }
-        // Accumulate tool calls from streaming chunks
         if (delta?.tool_calls) {
           for (let i = 0; i < delta.tool_calls.length; i++) {
             const deltaToolCall = delta.tool_calls[i];
@@ -98,12 +86,11 @@ export class ChatHandler {
                 }
               };
             } else {
-              // Append to existing tool call
               if (deltaToolCall.function?.name && !accumulatedToolCalls[i].function.name) {
                 accumulatedToolCalls[i].function.name = deltaToolCall.function.name;
               }
               if (deltaToolCall.function?.arguments) {
-                accumulatedToolCalls[i].function.arguments += deltaToolCall.function.arguments;
+                accumulatedToolCalls[i].function.arguments += deltaToolCall.function?.arguments;
               }
             }
           }
@@ -131,7 +118,7 @@ export class ChatHandler {
     }
     if (!responseMessage.tool_calls) {
       return {
-        content: responseMessage.content || 'I apologize, but I encountered an issue.'
+        content: responseMessage.content ?? 'I apologize, but I encountered an issue.'
       };
     }
     const toolCalls = await this.executeToolCalls(responseMessage.tool_calls as ChatCompletionMessageFunctionToolCall[]);
@@ -143,14 +130,18 @@ export class ChatHandler {
     );
     return { content: finalResponse, toolCalls };
   }
-  /**
-   * Execute all tool calls from OpenAI response
-   */
   private async executeToolCalls(openAiToolCalls: ChatCompletionMessageFunctionToolCall[]): Promise<ToolCall[]> {
     return Promise.all(
       openAiToolCalls.map(async (tc) => {
+        let args = {};
         try {
-          const args = tc.function.arguments ? JSON.parse(tc.function.arguments) : {};
+          if (tc.function.arguments) {
+            args = JSON.parse(tc.function.arguments);
+          }
+        } catch (error) {
+          console.error(`Failed to parse arguments for ${tc.function.name}:`, tc.function.arguments);
+        }
+        try {
           const result = await executeTool(tc.function.name, args);
           return {
             id: tc.id,
@@ -163,16 +154,13 @@ export class ChatHandler {
           return {
             id: tc.id,
             name: tc.function.name,
-            arguments: {},
+            arguments: args,
             result: { error: `Failed to execute ${tc.function.name}: ${error instanceof Error ? error.message : 'Unknown error'}` }
           };
         }
       })
     );
   }
-  /**
-   * Generate final response after tool execution
-   */
   private async generateToolResponse(
     userMessage: string,
     history: Message[],
@@ -201,11 +189,8 @@ export class ChatHandler {
       ],
       max_tokens: 4096
     });
-    return followUpCompletion.choices[0]?.message?.content || 'Tool results processed successfully.';
+    return followUpCompletion.choices[0]?.message?.content ?? 'Tool results processed successfully.';
   }
-  /**
-   * Build conversation messages for OpenAI API
-   */
   private buildConversationMessages(userMessage: string, history: Message[]) {
     return [
       {
@@ -219,9 +204,6 @@ export class ChatHandler {
       { role: 'user' as const, content: userMessage }
     ];
   }
-  /**
-   * Update the model for this chat handler
-   */
   updateModel(newModel: string): void {
     this.model = newModel;
   }

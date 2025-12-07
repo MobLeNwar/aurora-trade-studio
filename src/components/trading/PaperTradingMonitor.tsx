@@ -8,7 +8,7 @@ import { Play, Pause, TrendingUp, RefreshCw, AlertTriangle } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { toast } from 'sonner';
 import { fetchLivePrice } from '@/lib/trading';
-import Alpaca from '@alpacahq/alpaca-trade-api';
+import { Alpaca } from '@alpacahq/alpaca-trade-api';
 interface Fill { timestamp: number; price: number; size: number; side: 'buy' | 'sell'; }
 interface Position { entryPrice: number; size: number; pnl: number; peakPrice: number; }
 interface PaperTradingMonitorProps { symbol: string; exchange: string; }
@@ -40,13 +40,17 @@ export function PaperTradingMonitor({ symbol, exchange }: PaperTradingMonitorPro
     checkConfig();
   }, []);
   const updatePriceAndPosition = useCallback(async () => {
-    const newPrice = await fetchLivePrice({ exchange, symbol });
-    if (newPrice === null) return;
-    lastPrice.current = newPrice;
-    if (position) {
-      const newPnl = (newPrice - position.entryPrice) * position.size;
-      setPosition(p => p ? { ...p, pnl: newPnl } : null);
-      setPnlHistory(prev => [...prev.slice(-99), { time: Date.now(), pnl: newPnl }]);
+    try {
+      const newPrice = await fetchLivePrice({ exchange, symbol });
+      if (newPrice === null) return;
+      lastPrice.current = newPrice;
+      if (position?.entryPrice) {
+        const newPnl = (newPrice - position.entryPrice) * (position.size || 1);
+        setPosition(p => p ? { ...p, pnl: newPnl } : null);
+        setPnlHistory(prev => [...prev.slice(-99), { time: Date.now(), pnl: newPnl }]);
+      }
+    } catch (e) {
+      console.warn('Polling error:', e);
     }
   }, [exchange, symbol, position]);
   useEffect(() => {
@@ -68,6 +72,10 @@ export function PaperTradingMonitor({ symbol, exchange }: PaperTradingMonitorPro
     toast.info("Paper trading simulation has been reset.");
   };
   const placeOrder = (side: 'buy' | 'sell') => {
+    if (!isActive) {
+      toast.info("Start the monitor to place trades.");
+      return;
+    }
     if (!isAlpacaConfigured) {
       const price = lastPrice.current || 100;
       const newFill: Fill = { timestamp: Date.now(), price, size: 1, side };
@@ -91,11 +99,11 @@ export function PaperTradingMonitor({ symbol, exchange }: PaperTradingMonitorPro
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Live Monitor</CardTitle>
           <div className="flex items-center gap-2">
-            <Button onClick={() => setIsActive(!isActive)} size="sm">
+            <Button onClick={() => setIsActive(!isActive)} size="sm" className="hover:scale-105 active:scale-95 transition-transform">
               {isActive ? <Pause className="w-4 h-4 mr-2" /> : <Play className="w-4 h-4 mr-2" />}
               {isActive ? 'Pause' : 'Start'}
             </Button>
-            <Button onClick={resetSimulation} size="sm" variant="outline"><RefreshCw className="w-4 h-4 mr-2" /> Reset</Button>
+            <Button onClick={resetSimulation} size="sm" variant="outline" className="hover:scale-105 active:scale-95 transition-transform"><RefreshCw className="w-4 h-4 mr-2" /> Reset</Button>
           </div>
         </CardHeader>
         <CardContent className="grid md:grid-cols-2 gap-6">
@@ -111,7 +119,7 @@ export function PaperTradingMonitor({ symbol, exchange }: PaperTradingMonitorPro
                 ) : <p className="text-muted-foreground">No active position.</p>}
               </CardContent>
             </Card>
-            <div className="h-48">
+            <div className="h-[200px] md:h-48">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={pnlHistory}>
                   <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
@@ -122,8 +130,8 @@ export function PaperTradingMonitor({ symbol, exchange }: PaperTradingMonitorPro
               </ResponsiveContainer>
             </div>
             <div className="flex gap-2">
-              <Button onClick={() => placeOrder('buy')} className="w-full bg-green-600 hover:bg-green-700">Market Buy</Button>
-              <Button onClick={() => placeOrder('sell')} className="w-full bg-red-600 hover:bg-red-700">Market Sell</Button>
+              <Button onClick={() => placeOrder('buy')} className="w-full bg-green-600 hover:bg-green-700 hover:scale-105 active:scale-95 transition-all">Market Buy</Button>
+              <Button onClick={() => placeOrder('sell')} className="w-full bg-red-600 hover:bg-red-700 hover:scale-105 active:scale-95 transition-all">Market Sell</Button>
             </div>
           </div>
           <div>
@@ -133,7 +141,7 @@ export function PaperTradingMonitor({ symbol, exchange }: PaperTradingMonitorPro
                 <TableHeader><TableRow><TableHead>Time</TableHead><TableHead>Side</TableHead><TableHead className="text-right">Price</TableHead></TableRow></TableHeader>
                 <TableBody>
                   {fills.map((fill) => (
-                    <motion.tr key={fill.timestamp} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                    <motion.tr key={fill.timestamp} initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }}>
                       <TableCell>{new Date(fill.timestamp).toLocaleTimeString()}</TableCell>
                       <TableCell><Badge variant={fill.side === 'buy' ? 'default' : 'destructive'} className={fill.side === 'buy' ? 'bg-green-500/20 text-green-700' : 'bg-red-500/20 text-red-700'}>{fill.side}</Badge></TableCell>
                       <TableCell className="text-right">${fill.price.toFixed(2)}</TableCell>

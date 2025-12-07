@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Zap, Bot, Settings, BrainCircuit, Clock, Loader2 } from 'lucide-react';
+import { Zap, Bot, Settings, BrainCircuit, Clock, Loader2, Download } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -51,7 +51,7 @@ export default function TradingDashboard() {
         }
         toast.success('Backtest complete!');
       } catch (error) {
-        toast.error('Backtest Failed');
+        toast.error('Backtest Failed', { description: error instanceof Error ? error.message : 'Unknown error' });
       } finally {
         setIsLoading(false);
       }
@@ -61,12 +61,17 @@ export default function TradingDashboard() {
     const loadData = async () => {
       setIsFetchingData(true);
       toast.info(`Fetching historical data for ${symbol}...`);
-      const data = await fetchHistoricalData({ symbol, exchange, limit: 500 });
-      if (data) {
-        setCandles(data);
-        toast.success(`Loaded ${data.length} candles for ${symbol}.`);
-      } else {
-        toast.error(`Failed to fetch data for ${symbol}.`);
+      try {
+        const data = await fetchHistoricalData({ symbol, exchange, limit: 500 });
+        if (data) {
+          setCandles(data);
+          toast.success(`Loaded ${data.length} candles for ${symbol}.`);
+        } else {
+          toast.error(`Failed to fetch data for ${symbol}.`);
+        }
+      } catch (error) {
+        console.warn('Data fetch error:', error);
+        toast.error('Failed to fetch data', { description: 'Could not retrieve market data.' });
       }
       setIsFetchingData(false);
     };
@@ -96,6 +101,22 @@ export default function TradingDashboard() {
       handleRunBacktest(bestStrategy);
     }, 50);
   };
+  const handleExport = () => {
+    if (!backtestResult) {
+      toast.info("No backtest results to export.");
+      return;
+    }
+    const blob = new Blob([JSON.stringify(backtestResult, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `backtest-results-${symbol.replace('/', '_')}-${new Date().toISOString()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success("Backtest results exported.");
+  };
   return (
     <div className="min-h-screen bg-muted/30 dark:bg-background/50">
       <header className="sticky top-0 z-30 flex h-14 items-center gap-4 border-b bg-background/80 backdrop-blur-lg px-4 sm:px-6">
@@ -115,9 +136,9 @@ export default function TradingDashboard() {
                 <CsvUploader onDataLoaded={setCandles} />
               </CardContent>
             </Card>
-            <AnimatePresence>{backtestResult && <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}><BacktestSummary metrics={backtestResult.metrics} /></motion.div>}</AnimatePresence>
+            <AnimatePresence>{backtestResult && <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}><BacktestSummary metrics={backtestResult.metrics} /></motion.div>}</AnimatePresence>
             <Card className="shadow-soft rounded-2xl overflow-hidden">
-              <CardHeader className="flex flex-row items-center justify-between"><CardTitle>Performance</CardTitle>{isFetchingData && <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />}</CardHeader>
+              <CardHeader className="flex flex-row items-center justify-between"><CardTitle>Performance</CardTitle><div className="flex items-center gap-2">{isFetchingData && <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />}<Button variant="outline" size="sm" onClick={handleExport} disabled={!backtestResult}><Download className="w-4 h-4 mr-2" /> Export</Button></div></CardHeader>
               <CardContent className="h-[400px] p-0">
                 {isFetchingData ? <Skeleton className="w-full h-full" /> :
                 <ResponsiveContainer width="100%" height="100%">
@@ -142,8 +163,8 @@ export default function TradingDashboard() {
           </main>
           <aside className="lg:col-span-4 space-y-6">
             <Tabs defaultValue="strategy" className="w-full"><TabsList className="grid w-full grid-cols-2"><TabsTrigger value="strategy"><Settings className="w-4 h-4 mr-2" />Strategy</TabsTrigger><TabsTrigger value="ai-explorer"><Bot className="w-4 h-4 mr-2" />AI Explorer</TabsTrigger></TabsList>
-              <TabsContent value="strategy"><StrategyCard strategy={strategy} onStrategyChange={setStrategy} onRunBacktest={handleRunBacktest} isLoading={isLoading} /><Button onClick={handleOptimize} disabled={isOptimizing} className="w-full mt-4"><BrainCircuit className="w-4 h-4 mr-2" /> {isOptimizing ? 'Optimizing...' : 'Optimize Parameters'}</Button><Button onClick={() => setIsAutoBacktesting(!isAutoBacktesting)} variant="outline" className="w-full mt-2"><Clock className="w-4 h-4 mr-2" /> {isAutoBacktesting ? 'Stop Scheduler' : 'Schedule Backtests'}</Button></TabsContent>
-              <TabsContent value="ai-explorer"><ChatAssistantWrapper strategy={strategy} backtestResult={backtestResult} /></TabsContent>
+              <TabsContent value="strategy" asChild><motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}><StrategyCard strategy={strategy} onStrategyChange={setStrategy} onRunBacktest={handleRunBacktest} isLoading={isLoading} /><Button onClick={handleOptimize} disabled={isOptimizing} className="w-full mt-4"><BrainCircuit className="w-4 h-4 mr-2" /> {isOptimizing ? 'Optimizing...' : 'Optimize Parameters'}</Button><Button onClick={() => setIsAutoBacktesting(!isAutoBacktesting)} variant="outline" className="w-full mt-2"><Clock className="w-4 h-4 mr-2" /> {isAutoBacktesting ? 'Stop Scheduler' : 'Schedule Backtests'}</Button></motion.div></TabsContent>
+              <TabsContent value="ai-explorer" asChild><motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}><ChatAssistantWrapper strategy={strategy} backtestResult={backtestResult} /></motion.div></TabsContent>
             </Tabs>
           </aside>
         </div>
