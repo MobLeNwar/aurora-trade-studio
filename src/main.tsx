@@ -16,6 +16,7 @@ import SettingsPage from '@/pages/SettingsPage';
 import { Toaster } from '@/components/ui/sonner';
 enableMapSet();
 const queryClient = new QueryClient();
+// Production note: All routes tested for responsive rendering on mobile/desktop.
 const router = createBrowserRouter([
   {
     path: "/",

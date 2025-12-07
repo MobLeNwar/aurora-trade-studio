@@ -130,5 +130,42 @@ class ChatService {
     `;
     return this.sendMessage(context, model, onChunk);
   }
+  // Methods for legacy DemoPage
+  async clearMessages(): Promise<ChatResponse> {
+    try {
+      const response = await this.fetchApi(`${this.baseUrl}/clear`, { method: 'DELETE' });
+      return await response.json();
+    } catch (error) {
+      return { success: false, error: 'Failed to clear messages' };
+    }
+  }
+  async updateModel(model: string): Promise<ChatResponse> {
+    try {
+      const response = await this.fetchApi(`${this.baseUrl}/model`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model }),
+      });
+      return await response.json();
+    } catch (error) {
+      return { success: false, error: 'Failed to update model' };
+    }
+  }
+  async clearAllSessions(): Promise<{ success: boolean; error?: string }> {
+    try {
+      // This is a placeholder; a real implementation would need a dedicated backend endpoint.
+      console.warn("clearAllSessions is not fully implemented on the backend.");
+      const sessions = await this.listSessions();
+      if (sessions.data) {
+        for (const session of sessions.data) {
+          await this.deleteSession(session.id);
+        }
+      }
+      this.newSession();
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: 'Failed to clear all sessions' };
+    }
+  }
 }
 export const chatService = new ChatService();

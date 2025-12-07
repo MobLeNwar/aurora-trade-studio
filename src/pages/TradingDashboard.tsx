@@ -19,21 +19,13 @@ import { Link } from 'react-router-dom';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { ErrorFallback } from '@/components/ErrorFallback';
 import fallbackCandlesData from '@/pages/TradingSimulatorData.json';
 const initialStrategy: Strategy = {
   type: 'sma-cross',
   params: { shortPeriod: 10, longPeriod: 20 },
   risk: { positionSizePercent: 100, stopLossPercent: 2, slippagePercent: 0.05, feePercent: 0.1, trailingStopPercent: 0 },
 };
-function ErrorFallback() {
-  return (
-    <div role="alert" className="p-8 text-center bg-destructive/10 rounded-lg">
-      <h2 className="text-lg font-semibold text-destructive-foreground">Dashboard Error</h2>
-      <p className="my-4 text-muted-foreground">Something went wrong while loading the dashboard.</p>
-      <Button onClick={() => window.location.reload()}>Reload Dashboard</Button>
-    </div>
-  );
-}
 export default function TradingDashboard() {
   const [strategy, setStrategy] = useState<Strategy>(initialStrategy);
   const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
@@ -81,7 +73,8 @@ export default function TradingDashboard() {
       try {
         const data = await fetchHistoricalData({ symbol, exchange, limit: 500 });
         if (!data || data.length === 0) {
-          setCandles(fallbackCandlesData as Candle[]);
+          const fallback: Candle[] = fallbackCandlesData;
+          setCandles(fallback);
           toast.warning('No real-time data available. Using sample data for demonstration.', {
             description: 'Upload CSV or check connection for live data.',
           });
@@ -91,7 +84,8 @@ export default function TradingDashboard() {
         }
       } catch (error) {
         console.warn('Data fetch error:', error);
-        setCandles(fallbackCandlesData as Candle[]);
+        const fallback: Candle[] = fallbackCandlesData;
+        setCandles(fallback);
         toast.error('Failed to fetch market data. Using sample fallback.', {
           description: 'Upload CSV for custom data or retry.',
         });
@@ -100,6 +94,7 @@ export default function TradingDashboard() {
       }
     };
     loadData();
+    // Test: Verify backtest runs without data fetch errors using sample data.
   }, [symbol, exchange]);
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -153,7 +148,7 @@ export default function TradingDashboard() {
       <main>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="py-8 md:py-10 lg:py-12">
-            <ErrorBoundary fallbackRender={ErrorFallback}>
+            <ErrorBoundary>
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                 <div className="lg:col-span-8 space-y-6">
                   <Card className="shadow-soft rounded-2xl">

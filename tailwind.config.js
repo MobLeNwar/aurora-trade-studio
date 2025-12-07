@@ -98,7 +98,7 @@ export default {
   				foreground: 'hsl(var(--muted-foreground))'
   			},
   			primary: {
-  				DEFAULT: 'hsl(var(--primary))',
+  				DEFAULT: 'hsl(var(--primary))', // Orange #F38020
   				foreground: 'hsl(var(--primary-foreground))'
   			},
   			border: 'hsl(var(--border))',
@@ -112,11 +112,11 @@ export default {
   				foreground: 'hsl(var(--popover-foreground))'
   			},
   			secondary: {
-  				DEFAULT: 'hsl(var(--secondary))',
+  				DEFAULT: 'hsl(var(--secondary))', // Indigo #4F46E5
   				foreground: 'hsl(var(--secondary-foreground))'
   			},
   			accent: {
-  				DEFAULT: 'hsl(var(--accent))',
+  				DEFAULT: 'hsl(var(--accent))', // Cyan #06B6D4
   				foreground: 'hsl(var(--accent-foreground))'
   			},
   			destructive: {
@@ -219,7 +219,11 @@ export default {
   				to: {
   					height: '0'
   				}
-  			}
+  			},
+        'chart-pulse': {
+          '0%, 100%': { opacity: 1 },
+          '50%': { opacity: 0.7 }
+        }
   		},
   		animation: {
   			'fade-in': 'fade-in 0.6s ease-out',
@@ -229,7 +233,8 @@ export default {
   			glow: 'glow 2s ease-in-out infinite',
   			float: 'float 3s ease-in-out infinite',
   			'accordion-down': 'accordion-down 0.2s ease-out',
-  			'accordion-up': 'accordion-up 0.2s ease-out'
+  			'accordion-up': 'accordion-up 0.2s ease-out',
+        'chart-pulse': 'chart-pulse 2s ease-in-out infinite'
   		},
   		backgroundImage: {
   			'gradient-rainbow': 'linear-gradient(135deg, #667eea 0%, #764ba2 25%, #f093fb 50%, #f5576c 75%, #4facfe 100%)',
