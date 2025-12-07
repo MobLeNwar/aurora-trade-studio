@@ -90,8 +90,17 @@
   .alert-high-risk {
     @apply bg-destructive/10 text-destructive-foreground border-destructive/20 rounded-lg p-3;
     animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    box-shadow: 0 0 0 3px hsl(var(--destructive) / 0.2);
   }
   .chart-signal {
     stroke: hsl(var(--primary));
+    stroke-width: 2;
+  }
+  .mc-variance {
+    @apply bg-gradient-to-r from-green-400 via-yellow-400 to-red-400 opacity-20 rounded-md;
+    animation: pulse 3s ease-in-out infinite;
+  }
+  .error-toast {
+    @apply bg-destructive/10 border-destructive/30 text-destructive-foreground backdrop-blur-sm;
   }
 }

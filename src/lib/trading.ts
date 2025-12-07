@@ -8,28 +8,32 @@ export interface Strategy {
 }
 export interface Trade { entryTime: number; exitTime: number; entryPrice: number; exitPrice: number; pnl: number; pnlPercent: number; type: 'long' | 'short'; }
 export interface BacktestMetrics { netProfit: number; winRate: number; totalTrades: number; profitFactor: number; maxDrawdown: number; sharpeRatio: number; }
-export interface BacktestResult { trades: Trade[]; metrics: BacktestMetrics; equityCurve: { date: string; value: number }[]; indicatorSeries: { [key: string]: (number | undefined)[] }; }
-export interface MonteCarloResult { meanPnl: number; stdDev: number; pnlDistribution: number[]; worstDrawdown: number; var95: number; }
+export interface BacktestResult { trades: Trade[]; metrics: BacktestMetrics; equityCurve: ({ date: string; value: number;[key: string]: any })[]; indicatorSeries: { [key: string]: (number | undefined)[] }; }
+export interface MonteCarloResult { meanPnl: number; stdDev: number; pnlDistribution: number[]; worstDrawdown: number; var95: number; confidenceInterval: [number, number]; }
 let lastFetchedData: Candle[] = [];
 export async function fetchHistoricalData({ exchange = 'binance', symbol = 'BTC/USDT', timeframe = '1h', limit = 500 }: { exchange?: string; symbol?: string; timeframe?: string; limit?: number }): Promise<Candle[] | null> {
   try {
-    // @ts-expect-error - ccxt dynamic exchange instantiation
-    const exchangeInstance = new ccxt[exchange]();
+    const exchangeInstance = new (ccxt as any)[exchange]() as ccxt.Exchange;
     const ohlcv = await exchangeInstance.fetchOHLCV(symbol, timeframe, undefined, limit);
+    if (!ohlcv || ohlcv.length < 100) {
+      throw new Error(`Insufficient data received from ${exchange}. Got ${ohlcv?.length || 0} candles.`);
+    }
     const candles = ohlcv.map(([timestamp, open, high, low, close, volume]: number[]) => ({ timestamp, open, high, low, close, volume }));
     lastFetchedData = candles;
     return candles;
   } catch (error) {
     console.error(`Failed to fetch data from ${exchange} for ${symbol}:`, error);
-    if (lastFetchedData.length > 0) return lastFetchedData; // Fallback to cached data
-    console.error('No cached data available');
+    if (lastFetchedData.length >= 100) {
+      console.warn('Using cached data due to fetch failure.');
+      return lastFetchedData;
+    }
+    console.error('No valid cached data available.');
     return null;
   }
 }
 export async function fetchLivePrice({ exchange = 'binance', symbol = 'BTC/USDT' }: { exchange?: string; symbol?: string }): Promise<number | null> {
   try {
-    // @ts-expect-error - ccxt dynamic exchange instantiation
-    const exchangeInstance = new ccxt[exchange]();
+    const exchangeInstance = new (ccxt as any)[exchange]() as ccxt.Exchange;
     const ticker = await exchangeInstance.fetchTicker(symbol);
     return ticker.last ?? null;
   } catch (error) {
@@ -44,7 +48,7 @@ export function runBacktest(strategy: Strategy, candles: Candle[]): BacktestResu
   }
   let equity = 10000;
   const initialEquity = equity;
-  const equityCurve = [{ date: new Date(candles[0].timestamp).toLocaleDateString(), value: equity }];
+  const equityCurve: ({ date: string; value: number;[key: string]: any })[] = [{ date: new Date(candles[0].timestamp).toLocaleDateString(), value: equity }];
   const trades: Trade[] = [];
   let position: { entryPrice: number; type: 'long' | 'short'; entryTime: number; virtualStop: number; } | null = null;
   let peakEquity = equity;
@@ -55,10 +59,8 @@ export function runBacktest(strategy: Strategy, candles: Candle[]): BacktestResu
     indicatorSeries.smaShort = SMA.calculate({ period: strategy.params.shortPeriod || 10, values: closePrices });
     indicatorSeries.smaLong = SMA.calculate({ period: strategy.params.longPeriod || 20, values: closePrices });
   } else if (strategy.type === 'rsi-filter') {
-    const rsiPeriod = strategy.params.rsiPeriod || 14;
-    const smaPeriod = strategy.params.smaPeriod || 50;
-    indicatorSeries.rsi = RSI.calculate({ period: rsiPeriod, values: closePrices });
-    indicatorSeries.sma = SMA.calculate({ period: smaPeriod, values: closePrices });
+    indicatorSeries.rsi = RSI.calculate({ period: strategy.params.rsiPeriod || 14, values: closePrices });
+    indicatorSeries.sma = SMA.calculate({ period: strategy.params.smaPeriod || 50, values: closePrices });
   }
   const closePosition = (exitTime: number, exitPrice: number) => {
     if (!position) return;
@@ -68,6 +70,10 @@ export function runBacktest(strategy: Strategy, candles: Candle[]): BacktestResu
     const fee = (position.entryPrice + finalExitPrice) * (strategy.risk.feePercent / 100);
     const netPnl = pnl - fee;
     const pnlPercent = netPnl / position.entryPrice;
+    if (Math.abs(pnlPercent) < 0.0001) { // Avoid micro-trades from slippage/fees
+      position = null;
+      return;
+    }
     equity += equity * (strategy.risk.positionSizePercent / 100) * pnlPercent;
     trades.push({ entryTime: position.entryTime, exitTime, entryPrice: position.entryPrice, exitPrice: finalExitPrice, pnl: netPnl, pnlPercent, type: position.type });
     position = null;
@@ -95,6 +101,17 @@ export function runBacktest(strategy: Strategy, candles: Candle[]): BacktestResu
         if (prevSmaShort <= prevSmaLong && smaShort > smaLong) signal = 'buy';
         if (prevSmaShort >= prevSmaLong && smaShort < smaLong) signal = 'sell';
       }
+    } else if (strategy.type === 'rsi-filter') {
+      const rsi = indicatorSeries.rsi?.[i - (strategy.params.rsiPeriod || 14)];
+      const sma = indicatorSeries.sma?.[i - (strategy.params.smaPeriod || 50)];
+      const rsiUpper = strategy.params.rsiUpper || 70;
+      const rsiLower = strategy.params.rsiLower || 30;
+      if (rsi && sma && candle.close > sma) {
+        if (rsi < rsiLower) signal = 'buy';
+      }
+      if (rsi && sma && candle.close < sma) {
+        if (rsi > rsiUpper) signal = 'sell';
+      }
     }
     if (position) {
       if ((position.type === 'long' && signal === 'sell') || (position.type === 'short' && signal === 'buy')) closePosition(candle.timestamp, candle.open);
@@ -104,7 +121,10 @@ export function runBacktest(strategy: Strategy, candles: Candle[]): BacktestResu
       const stopPrice = entryPrice * (1 - (strategy.risk.stopLossPercent / 100) * (signal === 'buy' ? 1 : -1));
       position = { entryPrice, type: signal === 'buy' ? 'long' : 'short', entryTime: candle.timestamp, virtualStop: stopPrice };
     }
-    equityCurve.push({ date: new Date(candle.timestamp).toLocaleDateString(), value: equity });
+    const equityPoint: any = { date: new Date(candle.timestamp).toLocaleDateString(), value: equity };
+    if (indicatorSeries.smaShort) equityPoint.smaShort = indicatorSeries.smaShort[i - (strategy.params.shortPeriod || 10)];
+    if (indicatorSeries.smaLong) equityPoint.smaLong = indicatorSeries.smaLong[i - (strategy.params.longPeriod || 20)];
+    equityCurve.push(equityPoint);
     if (equity > peakEquity) peakEquity = equity;
     const drawdown = (peakEquity - equity) / peakEquity;
     if (drawdown > maxDrawdown) maxDrawdown = drawdown;
@@ -112,7 +132,7 @@ export function runBacktest(strategy: Strategy, candles: Candle[]): BacktestResu
   const returns = trades.map(t => t.pnlPercent);
   const avgReturn = returns.reduce((a, b) => a + b, 0) / (returns.length || 1);
   const stdDev = Math.sqrt(returns.map(r => Math.pow(r - avgReturn, 2)).reduce((a, b) => a + b, 0) / (returns.length || 1));
-  const sharpeRatio = stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(252) : 0; // Assuming daily data
+  const sharpeRatio = stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(252) : 0;
   const metrics: BacktestMetrics = {
     netProfit: equity - initialEquity,
     winRate: trades.length > 0 ? trades.filter(t => t.pnl > 0).length / trades.length : 0,
@@ -124,7 +144,7 @@ export function runBacktest(strategy: Strategy, candles: Candle[]): BacktestResu
   return { trades, metrics, equityCurve, indicatorSeries };
 }
 export function runMonteCarlo(result: BacktestResult, iterations: number): MonteCarloResult {
-  if (result.trades.length === 0) return { meanPnl: 0, stdDev: 0, pnlDistribution: [], worstDrawdown: 0, var95: 0 };
+  if (result.trades.length === 0) return { meanPnl: 0, stdDev: 0, pnlDistribution: [], worstDrawdown: 0, var95: 0, confidenceInterval: [0, 0] };
   const pnlDistribution: number[] = [];
   let worstDrawdown = 0;
   for (let i = 0; i < iterations; i++) {
@@ -143,40 +163,15 @@ export function runMonteCarlo(result: BacktestResult, iterations: number): Monte
   const stdDev = Math.sqrt(pnlDistribution.map(x => Math.pow(x - meanPnl, 2)).reduce((a, b) => a + b, 0) / iterations);
   pnlDistribution.sort((a, b) => a - b);
   const var95 = pnlDistribution[Math.floor(iterations * 0.05)];
-  return { meanPnl, stdDev, pnlDistribution, worstDrawdown, var95 };
-}
-export function optimizeParams(baseStrategy: Strategy, paramRanges: { [key: string]: number[] }, candles: Candle[]): Strategy {
-  let bestStrategy = baseStrategy;
-  let bestSharpe = -Infinity;
-  const paramKeys = Object.keys(paramRanges);
-  const combinations = paramKeys.reduce((acc, key) => {
-    const newAcc: any[] = [];
-    (acc.length ? acc : [{}]).forEach(existingCombo => {
-      paramRanges[key].forEach(value => {
-        const newCombo = { ...existingCombo };
-        if (key in baseStrategy.params) newCombo.params = { ...(newCombo.params || {}), [key]: value };
-        else if (key in baseStrategy.risk) newCombo.risk = { ...(newCombo.risk || {}), [key]: value };
-        newAcc.push(newCombo);
-      });
-    });
-    return newAcc;
-  }, []);
-  for (const combo of combinations) {
-    const currentStrategy = { ...baseStrategy, params: { ...baseStrategy.params, ...combo.params }, risk: { ...baseStrategy.risk, ...combo.risk } };
-    const result = runBacktest(currentStrategy, candles);
-    if (result.metrics.sharpeRatio > bestSharpe) {
-      bestSharpe = result.metrics.sharpeRatio;
-      bestStrategy = currentStrategy;
-    }
-  }
-  return bestStrategy;
+  const confidenceInterval: [number, number] = [meanPnl - 1.96 * stdDev, meanPnl + 1.96 * stdDev];
+  return { meanPnl, stdDev, pnlDistribution, worstDrawdown, var95, confidenceInterval };
 }
 export function parseCsvData(csvString: string): Candle[] {
   const rows = csvString.trim().split('\n').slice(1);
   return rows.map(row => {
     const [timestamp, open, high, low, close, volume] = row.split(',');
     const ts = new Date(timestamp).getTime();
-    if (isNaN(ts)) { // Handle different date formats
+    if (isNaN(ts)) {
         const parsedTs = Date.parse(timestamp);
         if (!isNaN(parsedTs)) return { timestamp: parsedTs, open: parseFloat(open), high: parseFloat(high), low: parseFloat(low), close: parseFloat(close), volume: parseFloat(volume) };
     }
