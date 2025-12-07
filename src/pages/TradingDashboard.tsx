@@ -96,7 +96,26 @@ export default function TradingDashboard() {
           <main className="lg:col-span-8 space-y-6">
             <CsvUploader onDataLoaded={setCandles} />
             <AnimatePresence>{backtestResult && <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}><BacktestSummary metrics={backtestResult.metrics} /></motion.div>}</AnimatePresence>
-            <Card className="shadow-soft rounded-2xl overflow-hidden"><CardHeader className="flex flex-row items-center justify-between"><CardTitle>Performance</CardTitle></CardHeader><CardContent className="h-[400px] p-0"><ResponsiveContainer width="100%" height="100%"><AreaChart data={backtestResult?.equityCurve}><defs><linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#F38020" stopOpacity={0.8}/><stop offset="95%" stopColor="#F38020" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" /><XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} /><YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} domain={['dataMin', 'dataMax']} /><Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))', borderRadius: 'var(--radius)' }} /><Area type="monotone" dataKey="value" stroke="#F38020" fillOpacity={1} fill="url(#colorEquity)" name="Equity" /></ResponsiveContainer></CardContent></Card>
+            <Card className="shadow-soft rounded-2xl overflow-hidden">
+              <CardHeader className="flex flex-row items-center justify-between"><CardTitle>Performance</CardTitle></CardHeader>
+              <CardContent className="h-[400px] p-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={backtestResult?.equityCurve ?? []}>
+                    <defs>
+                      <linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#F38020" stopOpacity={0.8}/>
+                        <stop offset="95%" stopColor="#F38020" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} />
+                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} domain={['dataMin', 'dataMax']} />
+                    <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))', borderRadius: 'var(--radius)' }} />
+                    <Area type="monotone" dataKey="value" stroke="#F38020" fillOpacity={1} fill="url(#colorEquity)" name="Equity" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
             <Tabs defaultValue="trades"><TabsList><TabsTrigger value="trades">Trades</TabsTrigger><TabsTrigger value="paper-trading">Paper Trading</TabsTrigger><TabsTrigger value="library">Library</TabsTrigger></TabsList>
               <AnimatePresence mode="wait">
                 <motion.div key="trades" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><TabsContent value="trades"><TradeTable trades={backtestResult?.trades || []} /></TabsContent></motion.div>

@@ -44,7 +44,7 @@ export function RouteErrorBoundary() {
     return "An unexpected error occurred. Please try again later.";
   }, [error]);
   if (!error) {
-    return <div className="p-8 text-center">Loading...</div>;
+    return <div className="p-8 text-center text-muted-foreground">Loading...</div>;
   }
   return (
     <ErrorFallback
