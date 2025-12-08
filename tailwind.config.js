@@ -1,4 +1,5 @@
 /** @type {import('tailwindcss').Config} */
+const plugin = require('tailwindcss/plugin');
 export default {
   darkMode: ['class'],
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
@@ -243,5 +244,17 @@ export default {
   		}
   	}
   },
-  plugins: [require("tailwindcss-animate")]
+  plugins: [
+    require("tailwindcss-animate"),
+    plugin(function({ addUtilities }) {
+      addUtilities({
+        '.signal-alert': {
+          '@apply bg-gradient-to-r from-primary/10 to-secondary/10 border-l-4 border-primary rounded-r-lg p-4 shadow-sm': {},
+        },
+        '.win-rate-high': {
+          '@apply bg-yellow-500/20 text-yellow-700 dark:bg-yellow-500/10 dark:text-yellow-400 border border-yellow-500/20 font-semibold px-3 py-1 rounded-full text-sm': {},
+        },
+      })
+    })
+  ]
 }

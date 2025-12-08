@@ -48,3 +48,5 @@ export interface Tool {
     required: string[];
   };
 }
+// Re-export types from frontend for use in worker context
+export type { Candle, Signal } from '../../src/lib/trading';

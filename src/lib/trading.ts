@@ -1,6 +1,7 @@
 import { SMA, RSI } from 'technicalindicators';
 import sampleData from '@/pages/TradingSimulatorData.json';
 export interface Candle { timestamp: number; open: number; high: number; low: number; close: number; volume: number; }
+export interface Signal { symbol: string; vote: 'buy'|'sell'|'hold'; confidence: number; rationale: string; timestamp: number; }
 export interface Strategy {
   type: 'sma-cross' | 'rsi-filter';
   params: { [key: string]: number };
@@ -11,11 +12,11 @@ export interface BacktestMetrics { netProfit: number; winRate: number; totalTrad
 export interface BacktestResult { trades: Trade[]; metrics: BacktestMetrics; equityCurve: ({ date: string; value: number;[key: string]: any })[]; indicatorSeries: { [key: string]: (number | undefined)[] }; }
 export interface MonteCarloResult { meanPnl: number; stdDev: number; pnlDistribution: number[]; worstDrawdown: number; var95: number; confidenceInterval: [number, number]; }
 class SimpleEmitter {
-  listeners: { [key: string]: Function[] };
+  listeners: { [key: string]: ((data: any) => void)[] };
   constructor() {
     this.listeners = {};
   }
-  on(event: string, cb: Function) {
+  on(event: string, cb: (data: any) => void) {
     this.listeners[event] = this.listeners[event] || [];
     this.listeners[event].push(cb);
   }
@@ -52,7 +53,7 @@ export class AutonomousBot extends SimpleEmitter {
         }
         const data = await res.json();
         if (data.success && data.data.consensus.thresholdMet) {
-          const signal = {
+          const signal: Signal = {
             symbol,
             vote: data.data.consensus.vote,
             confidence: data.data.consensus.majority,
@@ -309,36 +310,31 @@ export function parseCsvData(csvString: string): Candle[] {
     return { timestamp: ts, open: parseFloat(open), high: parseFloat(high), low: parseFloat(low), close: parseFloat(close), volume: parseFloat(volume) };
   }).filter(c => !isNaN(c.timestamp) && !isNaN(c.close));
 }
-/**
- * Perform a simple grid-search over numeric parameter ranges and return the Strategy
- * with the best found params according to runBacktest using metrics.sharpeRatio (higher is better).
- *
- * Keys that exist on strategy.risk are applied to risk; keys that exist on strategy.params are applied to params;
- * unknown keys are added to params.
- *
- * This implementation is intended for small search spaces (exhaustive grid).
- */
+export function validateSignal(strategy: Strategy, signal: Signal, candles: Candle[]): BacktestMetrics {
+  const mockResult = runBacktest(strategy, candles.slice(-100));
+  const hypotheticalWinRate = mockResult.metrics.winRate * (signal.confidence / 100);
+  if (hypotheticalWinRate >= 0.8) {
+    console.warn('Disclaimer: Simulated 80%+ win rate based on signal confidence. This is a hypothetical projection and not a guarantee of future performance.');
+  }
+  return mockResult.metrics;
+}
 export function optimizeParams(strategy: Strategy, paramRanges: Record<string, number[]>, candles: Candle[]): Strategy {
   const keys = Object.keys(paramRanges);
   if (keys.length === 0) return strategy;
-  // Prepare ranges for keys, fallback to current values if a range is empty
   const ranges: Record<string, number[]> = {};
   for (const k of keys) {
     const vals = paramRanges[k];
     if (Array.isArray(vals) && vals.length > 0) ranges[k] = vals.slice();
     else {
-      // derive single-value range from existing strategy params/risk if available
       const fallback = (k in strategy.params ? (strategy.params as any)[k] : (k in strategy.risk ? (strategy.risk as any)[k] : undefined));
       ranges[k] = typeof fallback === 'number' ? [fallback] : [0];
     }
   }
-  // Deterministic pseudo-random generator (LCG) for reproducible results
   let seed = 123456789;
   const rand = () => {
     seed = (seed * 1664525 + 1013904223) >>> 0;
     return seed / 0x100000000;
   };
-  // Helper to create a candidate strategy from an array of numeric values aligned with keys
   const buildCandidate = (values: number[]): Strategy => {
     const candidate: Strategy = { type: strategy.type, params: { ...strategy.params }, risk: { ...strategy.risk } };
     for (let i = 0; i < keys.length; i++) {
@@ -350,7 +346,6 @@ export function optimizeParams(strategy: Strategy, paramRanges: Record<string, n
     }
     return candidate;
   };
-  // Initialize population
   const populationSize = Math.min(30, Math.max(6, keys.length * 3));
   const population: { values: number[]; fitness: number; sharpe: number; winRate: number }[] = [];
   for (let i = 0; i < populationSize; i++) {
@@ -370,10 +365,8 @@ export function optimizeParams(strategy: Strategy, paramRanges: Record<string, n
       const res = runBacktest(candidate, candles);
       const sharpe = res?.metrics?.sharpeRatio ?? 0;
       const winRate = res?.metrics?.winRate ?? 0;
-      // Fitness uses sharpe primarily, with bonus for high win rate (>0.8)
       let fitness = sharpe;
       if (winRate >= 0.8) fitness += 0.5;
-      // small penalty for overly complex parameter sets (not strictly necessary but stabilizes)
       entry.fitness = fitness;
       entry.sharpe = sharpe;
       entry.winRate = winRate;
@@ -385,7 +378,6 @@ export function optimizeParams(strategy: Strategy, paramRanges: Record<string, n
       return false;
     }
   };
-  // Evaluate initial population
   for (const p of population) {
     evaluate(p);
     if (p.fitness > bestFitness) {
@@ -395,19 +387,14 @@ export function optimizeParams(strategy: Strategy, paramRanges: Record<string, n
   }
   const generations = 40;
   for (let gen = 0; gen < generations; gen++) {
-    // Sort by fitness descending
     population.sort((a, b) => b.fitness - a.fitness);
-    // Early stop if target heuristics met: Sharpe > 2 and winRate > 0.8
     if (population[0].sharpe > 2 && population[0].winRate > 0.8) {
       bestStrategy = buildCandidate(population[0].values);
       break;
     }
-    // Keep top elite
     const eliteCount = Math.max(2, Math.floor(populationSize * 0.2));
     const nextGen: typeof population = population.slice(0, eliteCount).map(e => ({ values: e.values.slice(), fitness: e.fitness, sharpe: e.sharpe, winRate: e.winRate }));
-    // Fill rest by crossover + mutation
     while (nextGen.length < populationSize) {
-      // Select two parents via tournament selection
       const pickParent = () => {
         const a = population[Math.floor(rand() * population.length)];
         const b = population[Math.floor(rand() * population.length)];
@@ -417,12 +404,10 @@ export function optimizeParams(strategy: Strategy, paramRanges: Record<string, n
       const p2 = pickParent();
       const childVals: number[] = [];
       for (let i = 0; i < keys.length; i++) {
-        // crossover: pick value from one of parents or average if numeric ranges have many values
         const takeFromP1 = rand() > 0.5;
         const v = takeFromP1 ? p1.values[i] : p2.values[i];
         childVals.push(v);
       }
-      // mutation: small chance to randomly change one gene to another value from its range
       const mutationRate = 0.15;
       for (let i = 0; i < keys.length; i++) {
         if (rand() < mutationRate) {
@@ -439,7 +424,6 @@ export function optimizeParams(strategy: Strategy, paramRanges: Record<string, n
         bestStrategy = buildCandidate(child.values);
       }
     }
-    // replace population
     population.length = 0;
     population.push(...nextGen);
   }

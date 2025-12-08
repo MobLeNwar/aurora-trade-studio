@@ -1,14 +1,13 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { motion } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Play, Pause, TrendingUp, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Play, Pause, TrendingUp, RefreshCw, AlertTriangle, TrendingDown } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { toast } from 'sonner';
 import { fetchLivePrice } from '@/lib/trading';
-import Alpaca from '@alpacahq/alpaca-trade-api';
 interface Fill { timestamp: number; price: number; size: number; side: 'buy' | 'sell'; }
 interface Position { entryPrice: number; size: number; pnl: number; peakPrice: number; }
 interface PaperTradingMonitorProps { symbol: string; exchange: string; }
@@ -26,7 +25,10 @@ const containerVariants = {
     }
   }
 };
-export function PaperTradingMonitor({ symbol, exchange }: PaperTradingMonitorProps) {
+export const PaperTradingMonitor = forwardRef<
+  { placeOrder: (side: 'buy' | 'sell') => void },
+  PaperTradingMonitorProps
+>(({ symbol, exchange }, ref) => {
   const [isActive, setIsActive] = useState(false);
   const [fills, setFills] = useState<Fill[]>([]);
   const [position, setPosition] = useState<Position | null>(null);
@@ -85,7 +87,7 @@ export function PaperTradingMonitor({ symbol, exchange }: PaperTradingMonitorPro
     lastPrice.current = 0;
     toast.info("Paper trading simulation has been reset.");
   };
-  const placeOrder = (side: 'buy' | 'sell') => {
+  const placeOrder = useCallback((side: 'buy' | 'sell') => {
     if (!isActive) {
       toast.info("Start the monitor to place trades.");
       return;
@@ -100,7 +102,10 @@ export function PaperTradingMonitor({ symbol, exchange }: PaperTradingMonitorPro
       return;
     }
     toast.info(`Placing real paper trade via Alpaca for ${side} ${symbol}... (Not implemented)`);
-  };
+  }, [isActive, isAlpacaConfigured, symbol]);
+  useImperativeHandle(ref, () => ({
+    placeOrder
+  }));
   return (
     <div className="space-y-6">
       {!isAlpacaConfigured && (
@@ -127,8 +132,13 @@ export function PaperTradingMonitor({ symbol, exchange }: PaperTradingMonitorPro
               <CardContent>
                 {position ? (
                   <>
-                    <div className={`text-3xl font-bold ${position.pnl >= 0 ? 'text-green-500' : 'text-red-500'}`} role="status">${position.pnl.toFixed(2)}</div>
-                    <p className="text-sm text-muted-foreground">Entry: ${position.entryPrice.toFixed(2)} | Size: {position.size}</p>
+                    <div className={`text-3xl font-bold ${position.pnl >= 0 ? 'text-green-500' : 'text-red-500'}`} role="status">
+                      <Badge variant={position.pnl >= 0 ? 'default' : 'destructive'} className={position.pnl >= 0 ? 'bg-green-500/20 text-green-700' : 'bg-red-500/20 text-red-700'}>
+                        {position.pnl >= 0 ? <TrendingUp className="w-4 h-4 mr-1" /> : <TrendingDown className="w-4 h-4 mr-1" />}
+                        ${position.pnl.toFixed(2)}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-2">Entry: ${position.entryPrice.toFixed(2)} | Size: {position.size}</p>
                   </>
                 ) : <p className="text-muted-foreground">No active position.</p>}
               </CardContent>
@@ -154,8 +164,8 @@ export function PaperTradingMonitor({ symbol, exchange }: PaperTradingMonitorPro
               <Table aria-label="Recent fills">
                 <TableHeader><TableRow><TableHead>Time</TableHead><TableHead>Side</TableHead><TableHead className="text-right">Price</TableHead></TableRow></TableHeader>
                 <motion.tbody variants={containerVariants} initial="hidden" animate="visible">
-                  {fills.map((fill) => (
-                    <motion.tr variants={fadeInUp} key={fill.timestamp}>
+                  {fills.map((fill, index) => (
+                    <motion.tr variants={fadeInUp} key={fill.timestamp} transition={{ delay: index * 0.1 }}>
                       <TableCell>{new Date(fill.timestamp).toLocaleTimeString()}</TableCell>
                       <TableCell><Badge variant={fill.side === 'buy' ? 'default' : 'destructive'} className={fill.side === 'buy' ? 'bg-green-500/20 text-green-700' : 'bg-red-500/20 text-red-700'}>{fill.side}</Badge></TableCell>
                       <TableCell className="text-right">${fill.price.toFixed(2)}</TableCell>
@@ -169,4 +179,4 @@ export function PaperTradingMonitor({ symbol, exchange }: PaperTradingMonitorPro
       </Card>
     </div>
   );
-}
+});

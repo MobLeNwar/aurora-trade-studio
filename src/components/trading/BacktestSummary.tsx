@@ -4,12 +4,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ArrowUp, ArrowDown, Percent, Hash, Target, TrendingDown, AlertTriangle, TrendingUp as TrendingUpIcon, Bot } from 'lucide-react';
 import { BarChart, Bar, ResponsiveContainer, XAxis, YAxis } from 'recharts';
-import { BacktestMetrics, MonteCarloResult } from '@/lib/trading';
+import { BacktestMetrics, MonteCarloResult, Signal } from '@/lib/trading';
 import { Badge } from '@/components/ui/badge';
 interface BacktestSummaryProps {
   metrics: BacktestMetrics;
   monteCarlo?: MonteCarloResult | null;
-  latestSignal?: { vote: string; confidence: number };
+  latestSignal?: Signal;
 }
 const formatPercent = (value: number) => `${(value * 100).toFixed(2)}%`;
 const formatCurrency = (value: number) => `${value.toFixed(2)}`;
@@ -61,7 +61,7 @@ export function BacktestSummary({ metrics, monteCarlo, latestSignal }: BacktestS
   return (
     <div role="region" aria-label="Backtest metrics summary" className="space-y-4">
       <motion.div
-        className="grid gap-4 md:grid-cols-3 lg:grid-cols-5"
+        className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5"
         variants={{ visible: { transition: { staggerChildren: 0.05 } } }}
         initial="hidden"
         animate="visible"
@@ -69,12 +69,12 @@ export function BacktestSummary({ metrics, monteCarlo, latestSignal }: BacktestS
         {summaryMetrics.map((metric) => <MetricCard key={metric.title} {...metric} />)}
       </motion.div>
       <motion.div
-        className="grid gap-4 md:grid-cols-2 lg:grid-cols-4"
+        className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-4"
         variants={{ visible: { transition: { staggerChildren: 0.05, delayChildren: 0.2 } } }}
         initial="hidden"
         animate="visible"
       >
-        {monteCarlo ? mcMetrics.map((metric) => <MetricCard key={metric.title} {...metric} />) : Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}
+        {monteCarlo ? mcMetrics.map((metric) => <MetricCard key={metric.title} {...metric} />) : Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-24 w-full rounded-2xl" />)}
         {latestSignal && (
           <motion.div variants={metricCardVariants}>
             <Card className="shadow-soft rounded-2xl h-full">
@@ -86,6 +86,12 @@ export function BacktestSummary({ metrics, monteCarlo, latestSignal }: BacktestS
                 <Badge variant={latestSignal.vote === 'buy' ? 'default' : latestSignal.vote === 'sell' ? 'destructive' : 'secondary'} className={latestSignal.vote === 'buy' ? 'bg-green-500/20 text-green-700 dark:bg-green-500/10 dark:text-green-400' : latestSignal.vote === 'sell' ? 'bg-red-500/20 text-red-700 dark:bg-red-500/10 dark:text-red-400' : ''}>
                   {latestSignal.vote.toUpperCase()} ({latestSignal.confidence.toFixed(1)}%)
                 </Badge>
+                {latestSignal.confidence > 80 && (
+                  <div className="mt-2">
+                    <Badge className="win-rate-high">Potential 80%+ Win Rate</Badge>
+                    <p className="text-xs text-muted-foreground mt-1">Simulated; Not Guaranteed.</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </motion.div>
@@ -105,7 +111,7 @@ export function BacktestSummary({ metrics, monteCarlo, latestSignal }: BacktestS
               </CardContent>
             </Card>
           </motion.div>
-        ) : <Skeleton className="h-24 w-full" />}
+        ) : <Skeleton className="h-24 w-full rounded-2xl" />}
       </motion.div>
     </div>
   );
