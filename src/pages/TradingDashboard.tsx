@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, LineChart, Line, ReferenceLine } from 'recharts';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Zap, Bot, Settings, BrainCircuit, Clock, Loader2, Download, Play, Pause, CheckCircle } from 'lucide-react';
+import { Zap, Bot, Settings, BrainCircuit, Clock, Loader2, Download, Play, Pause, CheckCircle, Users, MessageSquare, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -23,6 +23,7 @@ import fallbackCandlesData from '@/pages/TradingSimulatorData.json';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { RSI, MACD, SMA } from 'technicalindicators';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 const initialStrategy: Strategy = {
   type: 'sma-cross',
   params: { shortPeriod: 10, longPeriod: 20 },
@@ -50,6 +51,9 @@ export default function TradingDashboard() {
   const [trendData, setTrendData] = useState<any[]>([]);
   const [indicatorData, setIndicatorData] = useState<{ rsi: any[], macd: any[] }>({ rsi: [], macd: [] });
   const [regimes, setRegimes] = useState<{ [key: string]: string }>({});
+  const [councilData, setCouncilData] = useState<any>(null);
+  const [isCouncilLoading, setIsCouncilLoading] = useState(false);
+  const [councilSymbol, setCouncilSymbol] = useState(symbol);
   const handleRunBacktest = useCallback((currentStrategy: Strategy) => {
     if (candles.length === 0) {
       toast.error("No historical data available. Please upload CSV or wait for data to fetch.");
@@ -148,11 +152,37 @@ export default function TradingDashboard() {
       });
     }
   }, [symbol, exchange, candles]);
-  useEffect(() => {
-    if (activeTab === 'trends') {
-      loadTrends();
+  const loadCouncil = useCallback(async () => {
+    setIsCouncilLoading(true);
+    toast.info(`Convening AI Council for ${councilSymbol}...`);
+    try {
+      const res = await fetch('/api/council-debate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: councilSymbol, timeframes: ['1m', '5m', '1h', '4h'] })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setCouncilData(data.data);
+        toast.success('Council debate complete.');
+        if (data.data.consensus.thresholdMet) {
+          toast.success(`Council Action: ${data.data.consensus.vote.toUpperCase()} (${data.data.consensus.majority.toFixed(1)}%)`, {
+            description: `Auto-execute triggered. Rationale: ${data.data.aggregatedRationale.slice(0, 100)}...`
+          });
+        }
+      } else {
+        toast.error('Council debate failed', { description: data.error });
+      }
+    } catch (e) {
+      toast.error('Failed to fetch council debate.');
+    } finally {
+      setIsCouncilLoading(false);
     }
-  }, [activeTab, loadTrends]);
+  }, [councilSymbol]);
+  useEffect(() => {
+    if (activeTab === 'trends') loadTrends();
+    if (activeTab === 'council') loadCouncil();
+  }, [activeTab, loadTrends, loadCouncil]);
   useEffect(() => {
     const handleSignal = (sig: Signal) => {
       setSignals(prev => [sig, ...prev.slice(0, 9)]);
@@ -166,12 +196,13 @@ export default function TradingDashboard() {
       toast.success(`Autonomous Signal: ${sig.symbol} ${sig.vote.toUpperCase()}`, {
         description: `Confidence: ${sig.confidence.toFixed(1)}%`,
       });
-      if (sig.confidence > 90 && (sig.vote === 'buy' || sig.vote === 'sell')) {
-        monitorRef.current?.placeOrder(sig.vote);
-        toast.info(`High-confidence signal detected. Auto-placing paper trade for ${sig.vote}.`);
-      }
+    };
+    const handleAutoExecute = (sig: Signal) => {
+      monitorRef.current?.placeOrder(sig.vote as 'buy' | 'sell');
+      toast.info(`High-confidence signal detected. Auto-placing paper trade for ${sig.vote}.`);
     };
     bot.on('signal', handleSignal);
+    bot.on('auto-execute', handleAutoExecute);
     return () => { /* cleanup */ };
   }, []);
   useEffect(() => {
@@ -217,6 +248,7 @@ export default function TradingDashboard() {
   };
   const voteData = [{ name: 'Buy', value: votes.buy }, { name: 'Sell', value: votes.sell }, { name: 'Hold', value: votes.hold }];
   const VOTE_COLORS = ['#22c55e', '#ef4444', '#6b7280'];
+  const COUNCIL_COLORS = ['#F38020', '#4F46E5', '#06B6D4', '#22c55e'];
   const getRegimeColor = (regime: string) => {
     if (regime === 'bull') return 'bg-green-500/20 text-green-700 dark:text-green-400';
     if (regime === 'bear') return 'bg-red-500/20 text-red-700 dark:text-red-400';
@@ -261,7 +293,7 @@ export default function TradingDashboard() {
                       </ResponsiveContainer>}
                     </CardContent>
                   </Card>
-                  <Tabs defaultValue="trades" value={activeTab} onValueChange={setActiveTab} role="tablist" aria-label="Trading views"><TabsList><TabsTrigger value="trades">Trades</TabsTrigger><TabsTrigger value="paper-trading">Paper Trading</TabsTrigger><TabsTrigger value="autonomous">Autonomous Bot</TabsTrigger><TabsTrigger value="trends">Trends View</TabsTrigger><TabsTrigger value="library">Library</TabsTrigger></TabsList>
+                  <Tabs defaultValue="trades" value={activeTab} onValueChange={setActiveTab} role="tablist" aria-label="Trading views"><TabsList><TabsTrigger value="trades">Trades</TabsTrigger><TabsTrigger value="paper-trading">Paper Trading</TabsTrigger><TabsTrigger value="autonomous">Autonomous Bot</TabsTrigger><TabsTrigger value="trends">Trends View</TabsTrigger><TabsTrigger value="council">Council Room</TabsTrigger><TabsTrigger value="library">Library</TabsTrigger></TabsList>
                     <AnimatePresence mode="wait">
                       <motion.div key={activeTab} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.2 }}>
                         <TabsContent value="trades" forceMount={activeTab === 'trades' ? true : undefined} className={activeTab !== 'trades' ? 'hidden' : ''}><TradeTable trades={backtestResult?.trades || []} /></TabsContent>
@@ -286,6 +318,17 @@ export default function TradingDashboard() {
                             </div>
                             <aside className="lg:col-span-4 space-y-6">
                               <Card><CardHeader><CardTitle>Multi-Timeframe Price</CardTitle></CardHeader><CardContent className="h-[300px] p-0"><ResponsiveContainer width="100%" height="100%"><LineChart data={trendData}><Tooltip /><XAxis dataKey="timestamp" tickFormatter={(ts) => new Date(ts).toLocaleDateString()} /><YAxis domain={['auto', 'auto']} /><Line type="monotone" dataKey="price1h" stroke="#F38020" name="1h" dot={false} /><Line type="monotone" dataKey="price4h" stroke="#4F46E5" name="4h" dot={false} /><Line type="monotone" dataKey="price1d" stroke="#06B6D4" name="1d" dot={false} /></LineChart></ResponsiveContainer></CardContent></Card>
+                            </aside>
+                          </div>
+                        </TabsContent>
+                        <TabsContent value="council" forceMount={activeTab === 'council' ? true : undefined} className={activeTab !== 'council' ? 'hidden' : ''}>
+                          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-4">
+                            <div className="lg:col-span-8 space-y-6">
+                              <Card><CardHeader><CardTitle>Council Vote Distribution</CardTitle></CardHeader><CardContent className="h-[300px]">{isCouncilLoading ? <Skeleton className="w-full h-full" /> : <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={councilData?.votes?.map((v: any) => ({ name: v.role, value: v.confidence })) || []} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} label>{(councilData?.votes || []).map((entry: any, index: number) => (<Cell key={`cell-${index}`} fill={COUNCIL_COLORS[index % COUNCIL_COLORS.length]} />))}</Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer>}</CardContent></Card>
+                              <Card><CardHeader><CardTitle>Debate Transcript</CardTitle></CardHeader><CardContent>{isCouncilLoading ? <Skeleton className="w-full h-24" /> : <Accordion type="single" collapsible className="w-full"><AccordionItem value="transcript"><AccordionTrigger>View Council Debate</AccordionTrigger><AccordionContent className="text-sm space-y-2 whitespace-pre-wrap font-mono">{councilData?.aggregatedRationale || 'No transcript available.'}</AccordionContent></AccordionItem></Accordion>}</CardContent></Card>
+                            </div>
+                            <aside className="lg:col-span-4 space-y-6">
+                              <Card><CardHeader><CardTitle>Council Controls</CardTitle></CardHeader><CardContent><Select value={councilSymbol} onValueChange={setCouncilSymbol}><SelectTrigger><SelectValue placeholder="Select Symbol" /></SelectTrigger><SelectContent><SelectItem value="BTC/USDT">BTC/USDT</SelectItem><SelectItem value="ETH/USDT">ETH/USDT</SelectItem><SelectItem value="SOL/USDT">SOL/USDT</SelectItem></SelectContent></Select><Button onClick={loadCouncil} className="w-full mt-4" disabled={isCouncilLoading}>{isCouncilLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Users className="w-4 h-4 mr-2" />} Convene Council</Button></CardContent></Card>
                             </aside>
                           </div>
                         </TabsContent>

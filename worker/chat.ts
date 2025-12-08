@@ -36,14 +36,14 @@ export class ChatHandler {
     message: string,
     conversationHistory: Message[],
     onChunk?: (chunk: string) => void,
-    context?: { candles?: Candle[]; sentiment?: string }
+    context?: { candles?: Candle[] | Record<string, Candle[]>; sentimentSummary?: string; includeRoles?: boolean }
   ): Promise<{
     content: string;
     toolCalls?: ToolCall[];
     councilResponse?: any;
   }> {
-    if (message.toLowerCase().includes('council vote') && context?.candles) {
-      const councilResponse = await this.processCouncilQuery(message, context.candles, context.sentiment);
+    if (message.toLowerCase().includes('council debate') && context?.candles && context?.includeRoles) {
+      const councilResponse = await this.processCouncilQuery(message, context.candles, context.sentimentSummary);
       return {
         content: councilResponse.aggregatedRationale,
         councilResponse,
@@ -79,35 +79,39 @@ export class ChatHandler {
   }
   async processCouncilQuery(
     userMessage: string,
-    candles: Candle[],
-    sentiment?: string
+    candles: Candle[] | Record<string, Candle[]>,
+    sentimentSummary?: string
   ): Promise<{
-    votes: Array<{ model: string; vote: 'buy' | 'sell' | 'hold'; confidence: number; rationale: string }>;
+    votes: Array<{ model: string; role: string; vote: 'buy' | 'sell' | 'hold'; confidence: number; rationale: string }>;
     consensus: { vote: string; thresholdMet: boolean; majority: number };
     aggregatedRationale: string;
   }> {
     if (this.nimClients.length === 0) {
       throw new Error("NIM clients are not configured for council voting.");
     }
-    const candleSummary = `Latest ${candles.length} candles provided, ending at ${new Date(candles[candles.length - 1].timestamp).toISOString()}. Last close: ${candles[candles.length - 1].close}.`;
-    const sentimentSummary = sentiment ? `Current sentiment is: ${sentiment}.` : 'No sentiment data provided.';
-    const prompt = `
-      As an expert trading AI, analyze the provided market data and sentiment to make a trading decision.
-      Data context: ${candleSummary}
-      Sentiment context: ${sentimentSummary}
-      Your task is to vote on the next likely market direction.
+    const candleData = Array.isArray(candles) ? candles : candles['1h'] || [];
+    const candleSummary = `Latest ${candleData.length} candles provided, ending at ${new Date(candleData[candleData.length - 1].timestamp).toISOString()}. Last close: ${candleData[candleData.length - 1].close}.`;
+    const sentimentText = sentimentSummary ? `Current sentiment is: ${sentimentSummary}.` : 'No sentiment data provided.';
+    const roles = [
+        { model: 'meta/llama-3.1-405b-instruct', role: 'TA Specialist', prompt: `As a TA Specialist, analyze these candles: ${candleSummary}. Focus on SMA, RSI, and MACD patterns.` },
+        { model: 'mistralai/mistral-nemo-12b-instruct', role: 'Sentiment Oracle', prompt: `As a Sentiment Oracle, score the hype from this summary: ${sentimentText}. Provide a buzz score from -1 (very bearish) to +1 (very bullish).` },
+        { model: 'meta/llama-3.1-70b-instruct', role: 'Forecaster', prompt: `As a Forecaster, predict the next price movement based on this data: ${candleSummary}. Consider volatility and trend.` },
+        { model: 'google-ai-studio/gemini-2.5-pro', role: 'Risk Guardian', prompt: `As a Risk Guardian, assess the risk of a trade given: ${candleSummary} and ${sentimentText}. Highlight potential drawdowns or reversals.` }
+    ];
+    const basePrompt = `
       Respond ONLY with a JSON object with the following structure:
       {
         "vote": "buy" | "sell" | "hold",
-        "confidence": number,
-        "rationale": "A brief explanation for your vote, based on technical indicators or sentiment."
+        "confidence": number (0-100),
+        "rationale": "A brief explanation for your vote, based on your role."
       }
     `;
-    const promises = this.nimClients.map(async ({ name, client }) => {
+    const promises = roles.map(async ({ model, role, prompt }) => {
       try {
-        const completion = await client.chat.completions.create({
-          model: name,
-          messages: [{ role: 'user', content: prompt }],
+        const clientEntry = this.nimClients.find(c => c.name === model) || { client: this.client };
+        const completion = await clientEntry.client.chat.completions.create({
+          model: model.startsWith('nim/') ? model.replace('nim/', '') : model,
+          messages: [{ role: 'user', content: `${prompt}\n${basePrompt}` }],
           max_tokens: 256,
           temperature: 0.5,
           response_format: { type: 'json_object' },
@@ -115,35 +119,43 @@ export class ChatHandler {
         const resultText = completion.choices[0]?.message?.content;
         if (!resultText) throw new Error('Empty response from model');
         const parsedResult = JSON.parse(resultText);
-        return { model: name, ...parsedResult };
+        return { model, role, ...parsedResult };
       } catch (error) {
-        console.error(`Error from model ${name}:`, error);
-        return { model: name, vote: 'hold', confidence: 0, rationale: `Error during analysis: ${error instanceof Error ? error.message : 'Unknown'}` };
+        console.error(`Error from model ${model} (${role}):`, error);
+        return { model, role, vote: 'hold', confidence: 0, rationale: `Error during analysis: ${error instanceof Error ? error.message : 'Unknown'}` };
       }
     });
     const votes = await Promise.all(promises);
+    const buzzMatch = sentimentSummary?.match(/buzz score: ([\d.-]+)/);
+    const buzz = buzzMatch ? parseFloat(buzzMatch[1]) : 0;
+    votes.forEach(v => {
+        if (v.vote !== 'hold') {
+            if (buzz > 0.5) v.confidence = Math.min(100, v.confidence * 1.1);
+            if (buzz < -0.5) v.confidence = Math.max(0, v.confidence * 0.9);
+        }
+    });
     const voteCounts: Record<'buy' | 'sell' | 'hold', number> = { buy: 0, sell: 0, hold: 0 };
-    let aggregatedRationale = "AI Council Rationales:\n";
+    let debateTranscript = `AI Council Debate Transcript (Buzz: ${buzz.toFixed(2)}):\n`;
     votes.forEach(v => {
       if (v.vote === 'buy' || v.vote === 'sell' || v.vote === 'hold') {
         voteCounts[v.vote]++;
       }
-      aggregatedRationale += `- ${v.model}: ${v.rationale} (Confidence: ${v.confidence}%)\n`;
+      debateTranscript += `- ${v.role} (${v.model.split('/')[1]}): ${v.rationale} (Confidence: ${v.confidence.toFixed(1)}%)\n`;
     });
     let consensusVote = 'hold';
     let maxVotes = 0;
-    for (const [vote, count] of Object.entries(voteCounts)) {
-      if (count > maxVotes) {
-        maxVotes = count;
+    for (const vote of (['buy', 'sell', 'hold'] as const)) {
+      if (voteCounts[vote] > maxVotes) {
+        maxVotes = voteCounts[vote];
         consensusVote = vote;
       }
     }
     const majority = (maxVotes / votes.length) * 100;
-    const thresholdMet = majority >= 70;
+    const thresholdMet = majority >= 75;
     return {
       votes,
       consensus: { vote: consensusVote, thresholdMet, majority },
-      aggregatedRationale,
+      aggregatedRationale: debateTranscript,
     };
   }
   private async handleStreamResponse(

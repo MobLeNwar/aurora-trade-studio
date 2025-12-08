@@ -31,51 +31,57 @@ export class AutonomousBot extends SimpleEmitter {
   exchange: string;
   pollInterval: number;
   interval: NodeJS.Timeout | null;
+  timeframes: string[];
   constructor(symbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT'], exchange = 'binance', pollInterval = 300000) {
     super();
     this.symbols = symbols;
     this.exchange = exchange;
-    this.pollInterval = pollInterval;
+    this.pollInterval = pollInterval; // 5 minutes
     this.interval = null;
+    this.timeframes = ['1m', '5m', '1h', '4h'];
   }
   async scan() {
     console.log(`Scanning symbols: ${this.symbols.join(', ')}`);
     for (const symbol of this.symbols) {
       try {
-        const res = await fetch('/api/council-vote', {
+        const multiTfData: Record<string, Candle[]> = {};
+        for (const tf of this.timeframes) {
+            const data = await fetchHistoricalData({ symbol, exchange: this.exchange, timeframe: tf, limit: 100 });
+            if (data) multiTfData[tf] = data;
+        }
+        const res = await fetch('/api/council-debate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ symbol, timeframe: '5m', limit: 50, includeSentiment: true })
+          body: JSON.stringify({ symbol, timeframes: this.timeframes, candles: multiTfData })
         });
         if (!res.ok) {
           const errorData = await res.json().catch(() => ({ error: `HTTP Error: ${res.status}` }));
-          throw new Error(errorData.error || 'Failed to fetch council vote');
+          throw new Error(errorData.error || 'Failed to fetch council debate');
         }
         const data = await res.json();
         if (data.success && data.data.consensus.thresholdMet) {
-          const buzzRes = await fetch('/api/sentiment', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ symbol })
-          });
-          const buzzData = await buzzRes.json();
-          const buzz = buzzData.success ? buzzData.data.buzz : 0;
-          let adjustedConfidence = data.data.consensus.majority;
-          if ((data.data.consensus.vote === 'buy' || data.data.consensus.vote === 'sell') && buzz > 0.5) {
+          const { consensus, aggregatedRationale: debateTranscript } = data.data;
+          const buzzMatch = debateTranscript.match(/Buzz:\s*([\d.-]+)/);
+          const buzz = buzzMatch ? parseFloat(buzzMatch[1]) : 0;
+          let adjustedConfidence = consensus.majority;
+          if (consensus.vote !== 'hold' && buzz > 0.5) {
             adjustedConfidence = Math.min(100, adjustedConfidence * 1.05);
           }
           const signal: Signal = {
             symbol,
-            vote: data.data.consensus.vote,
+            vote: consensus.vote,
             confidence: adjustedConfidence,
-            rationale: `${data.data.aggregatedRationale} (Social buzz: ${buzz.toFixed(2)})`,
+            rationale: `${debateTranscript.slice(0, 200)}... (Multi-TF buzz: ${buzz.toFixed(2)})`,
             timestamp: Date.now()
           };
           this.emit('signal', signal);
-          console.log(`Autonomous signal with social filter: ${symbol} ${signal.vote.toUpperCase()} (${signal.confidence.toFixed(1)}%)`);
+          console.log(`Autonomous signal from council: ${symbol} ${signal.vote.toUpperCase()} (${signal.confidence.toFixed(1)}%)`);
+          if (signal.confidence >= 90 && (signal.vote === 'buy' || signal.vote === 'sell')) {
+            this.emit('auto-execute', signal);
+          }
         }
       } catch (e) {
-        console.warn(`Council vote failed for ${symbol}:`, e);
+        console.warn(`Council debate failed for ${symbol}:`, e);
       }
     }
   }
@@ -323,11 +329,11 @@ export function parseCsvData(csvString: string): Candle[] {
 }
 export function validateSignal(strategy: Strategy, signal: Signal, candles: Candle[]): BacktestMetrics {
   const mockResult = runBacktest(strategy, candles.slice(-100));
-  const buzzMatch = signal.rationale.match(/buzz:\s*([\d.-]+)/);
+  const buzzMatch = signal.rationale.match(/buzz:\s*([\d.-]+)/i);
   const buzz = buzzMatch ? parseFloat(buzzMatch[1]) : 0;
   const hypotheticalWinRate = mockResult.metrics.winRate * (signal.confidence / 100) * (buzz > 0.5 ? 1.05 : 1);
-  if (hypotheticalWinRate >= 0.9) {
-    console.warn('Disclaimer: Simulated 90%+ win rate with social filter. This is a hypothetical projection with a +5% boost from hype and is not a guarantee of future performance.');
+  if (hypotheticalWinRate >= 0.85) {
+    console.warn('Disclaimer: Simulated 85%+ win rate with council debate filter. This is a hypothetical projection with a +5% boost from multi-TF/hype and is not a guarantee of future performance.');
   }
   return mockResult.metrics;
 }

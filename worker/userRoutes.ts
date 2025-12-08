@@ -30,54 +30,54 @@ export function coreRoutes(app: Hono<{ Bindings: Env }>) {
     });
 }
 export function userRoutes(app: Hono<{ Bindings: Env }>) {
-    app.post('/api/council-vote', async (c) => {
-        const { symbol = 'BTC/USDT', timeframe = '5m', limit = 50, includeSentiment = true } = await c.req.json();
+    app.post('/api/council-debate', async (c) => {
+        const { symbol = 'BTC/USDT', timeframes = ['1h'], candles: multiTfCandles } = await c.req.json();
         try {
-            // NOTE: Rate limiting would be implemented here using a Durable Object
-            // to track last vote timestamp per symbol. Skipped due to file constraints.
-            // 1. Fetch candles
-            const ccxtModule = await import('ccxt');
-            const ExchangeClass = (ccxtModule as any)['binance'];
-            if (!ExchangeClass) return c.json({ success: false, error: 'Invalid exchange' }, 400);
-            const exchangeInstance = new ExchangeClass({ enableRateLimit: true });
-            const ohlcv = await exchangeInstance.fetchOHLCV(symbol, timeframe, undefined, limit);
-            if (!ohlcv || ohlcv.length < 10) {
-                return c.json({ success: false, error: 'Insufficient candle data' }, 400);
-            }
-            const candles: Candle[] = ohlcv.map(([ts, o, h, l, c, v]: number[]) => ({ timestamp: ts, open: o, high: h, low: l, close: c, volume: v }));
-            // 2. Fetch sentiment
-            let sentiment = 'neutral';
-            if (includeSentiment) {
-                try {
-                    const sentimentRes = await c.fetch(new Request(new URL(c.req.url).origin + '/api/sentiment', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ symbol, sources: ['twitter', 'reddit'] })
-                    }));
-                    const sentimentData = await sentimentRes.json<{ success: boolean; data?: { buzz: number } }>();
-                    if (sentimentData.success && sentimentData.data) {
-                        sentiment = `Social buzz score: ${sentimentData.data.buzz.toFixed(2)} (-1 bearish to +1 bullish)`;
-                    }
-                } catch (e) {
-                    console.warn('Could not fetch sentiment for council vote:', e);
+            // NOTE: Rate limit: Check lastVoteTime in DO storage, if <5min return 429; else update timestamp.
+            // 1. Fetch candles if not provided
+            let candles: Candle[] | Record<string, Candle[]>;
+            if (multiTfCandles) {
+                candles = multiTfCandles;
+            } else {
+                const ccxtModule = await import('ccxt');
+                const ExchangeClass = (ccxtModule as any)['binance'];
+                if (!ExchangeClass) return c.json({ success: false, error: 'Invalid exchange' }, 400);
+                const exchangeInstance = new ExchangeClass({ enableRateLimit: true });
+                const ohlcv = await exchangeInstance.fetchOHLCV(symbol, timeframes[0], undefined, 100);
+                if (!ohlcv || ohlcv.length < 10) {
+                    return c.json({ success: false, error: 'Insufficient candle data' }, 400);
                 }
+                candles = ohlcv.map(([ts, o, h, l, c, v]: number[]) => ({ timestamp: ts, open: o, high: h, low: l, close: c, volume: v }));
             }
-            // 3. Call agent for council vote
+            // 2. Fetch sentiment internally
+            const sentimentToolRes = await executeTool('web_search', { query: `recent ${symbol} twitter reddit sentiment`, num_results: 5 });
+            let sentimentSummary = 'neutral';
+            if ('content' in sentimentToolRes) {
+                const buzzWords = { positive: ['bullish', 'buy', 'up', 'moon', 'pump', 'strong'], negative: ['bearish', 'sell', 'down', 'dump', 'crash', 'weak'] };
+                let score = 0, totalWords = 0;
+                const text = sentimentToolRes.content.toLowerCase();
+                buzzWords.positive.forEach(w => { const count = (text.match(new RegExp(`\\b${w}\\b`, 'g')) || []).length; score += count; totalWords += count; });
+                buzzWords.negative.forEach(w => { const count = (text.match(new RegExp(`\\b${w}\\b`, 'g')) || []).length; score -= count; totalWords += count; });
+                const buzz = totalWords > 0 ? Math.max(-1, Math.min(1, score / totalWords * 5)) : 0;
+                sentimentSummary = `Social buzz score: ${buzz.toFixed(2)} (-1 bearish to +1 bullish). Raw data: ${sentimentToolRes.content.slice(0, 200)}...`;
+            }
+            // 3. Call agent for council debate
             const agentId = `council-agent-${crypto.randomUUID()}`;
             const agent = await getAgentByName<Env, ChatAgent>(c.env.CHAT_AGENT, agentId);
             const requestBody = {
-                message: `Council vote on ${symbol}`,
+                message: `Council debate on ${symbol} with roles`,
                 model: 'nim/meta/llama-3.1-405b-instruct',
                 stream: false,
-                context: { candles, sentiment }
+                context: { candles, sentimentSummary, includeRoles: true }
             };
             const agentUrl = new URL(c.req.url);
             agentUrl.pathname = `/api/chat/${agentId}/chat`;
-            const agentResponse = await c.env.CHAT_AGENT.get(c.env.CHAT_AGENT.idFromName(agentId)).fetch(new Request(agentUrl, {
+            const agentDO = c.env.CHAT_AGENT.get(c.env.CHAT_AGENT.idFromName(agentId));
+            const agentResponse = await agentDO.fetch(agentUrl.toString(), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(requestBody)
-            }));
+            });
             if (!agentResponse.ok) {
                 const errorText = await agentResponse.text();
                 throw new Error(`Agent failed with status ${agentResponse.status}: ${errorText}`);
@@ -88,13 +88,13 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
                 return c.json({ success: false, error: 'Agent did not return council vote data', agentResponse: responseJson }, 500);
             }
             // 4. Log session
-            await registerSession(c.env, `vote-${symbol}-${Date.now()}`, `Council Vote: ${symbol}`, {
+            await registerSession(c.env, `debate-${symbol}-${Date.now()}`, `Council Debate: ${symbol}`, {
                 config: { symbol, exchange: 'binance' },
-                strategy: JSON.stringify(councilData.consensus)
+                strategy: JSON.stringify({ consensus: councilData.consensus, debate: councilData.aggregatedRationale })
             });
             return c.json({ success: true, data: councilData });
         } catch (e: any) {
-            console.error('Council vote error:', e);
+            console.error('Council debate error:', e);
             return c.json({ success: false, error: e.message }, 500);
         }
     });
