@@ -8,7 +8,7 @@ export interface Strategy {
   risk: { positionSizePercent: number; stopLossPercent: number; slippagePercent: number; feePercent: number; trailingStopPercent: number; };
 }
 export interface Trade { entryTime: number; exitTime: number; entryPrice: number; exitPrice: number; pnl: number; pnlPercent: number; type: 'long' | 'short'; }
-export interface BacktestMetrics { netProfit: number; winRate: number; totalTrades: number; profitFactor: number; maxDrawdown: number; sharpeRatio: number; }
+export interface BacktestMetrics { netProfit: number; winRate: number; totalTrades: number; profitFactor: number; maxDrawdown: number; sharpeRatio: number; simulatedWinRate?: number; }
 export interface BacktestResult { trades: Trade[]; metrics: BacktestMetrics; equityCurve: ({ date: string; value: number;[key: string]: any })[]; indicatorSeries: { [key: string]: (number | undefined)[] }; }
 export interface MonteCarloResult { meanPnl: number; stdDev: number; pnlDistribution: number[]; worstDrawdown: number; var95: number; confidenceInterval: [number, number]; }
 class SimpleEmitter {
@@ -82,6 +82,7 @@ export class AutonomousBot extends SimpleEmitter {
         }
       } catch (e) {
         console.warn(`Council debate failed for ${symbol}:`, e);
+        this.emit('signal', { symbol, vote: 'hold', confidence: 50, rationale: 'Fallback: No consensus due to API error', timestamp: Date.now() });
       }
     }
   }
@@ -101,6 +102,7 @@ export class AutonomousBot extends SimpleEmitter {
 }
 export const bot = new AutonomousBot();
 let lastFetchedData: Candle[] = [];
+const isValidCandle = (c: any): c is Candle => c && typeof c.timestamp === 'number' && !isNaN(c.close);
 export async function fetchHistoricalData({ exchange = 'binance', symbol = 'BTC/USDT', timeframe = '1h', limit = 500 }: { exchange?: string; symbol?: string; timeframe?: string; limit?: number }): Promise<Candle[] | null> {
   const cacheKey = `historical-${exchange}-${symbol}-${timeframe}-${limit}`;
   try {
@@ -127,7 +129,6 @@ export async function fetchHistoricalData({ exchange = 'binance', symbol = 'BTC/
       throw new Error(errorData.error || 'Failed to fetch data from proxy');
     }
     type ProxyResponse = { success?: boolean; data?: any; error?: string; [key: string]: any };
-    // attempt to parse as text first to guard against invalid JSON
     const rawText = await response.text().catch(() => '');
     let proxyData: ProxyResponse = {};
     try {
@@ -137,7 +138,6 @@ export async function fetchHistoricalData({ exchange = 'binance', symbol = 'BTC/
       proxyData = {};
     }
     if (proxyData && proxyData.success && Array.isArray(proxyData.data) && proxyData.data.length >= 100) {
-      // Normalize/validate candle objects to ensure shape matches Candle[]
       const candles: Candle[] = proxyData.data.map((c: any) => {
         if (!c) return null as any;
         const timestamp = Number(c.timestamp ?? c[0]);
@@ -147,7 +147,7 @@ export async function fetchHistoricalData({ exchange = 'binance', symbol = 'BTC/
         const close = Number(c.close ?? c[4]);
         const volume = Number(c.volume ?? c[5] ?? c[6] ?? 0);
         return { timestamp, open, high, low, close, volume } as Candle;
-      }).filter((c: any) => c && Number.isFinite(c.timestamp) && Number.isFinite(c.close));
+      }).filter(isValidCandle);
       lastFetchedData = candles;
       try {
         localStorage.setItem(cacheKey, JSON.stringify({ data: candles, timestamp: Date.now() }));
@@ -332,8 +332,9 @@ export function validateSignal(strategy: Strategy, signal: Signal, candles: Cand
   const buzzMatch = signal.rationale.match(/buzz:\s*([\d.-]+)/i);
   const buzz = buzzMatch ? parseFloat(buzzMatch[1]) : 0;
   const hypotheticalWinRate = mockResult.metrics.winRate * (signal.confidence / 100) * (buzz > 0.5 ? 1.05 : 1);
-  if (hypotheticalWinRate >= 0.85) {
-    console.warn('Disclaimer: Simulated 85%+ win rate with council debate filter. This is a hypothetical projection with a +5% boost from multi-TF/hype and is not a guarantee of future performance.');
+  if (hypotheticalWinRate >= 0.8) {
+    console.warn('Simulated 80%+ win rate: Hypothetical projection from backtest + AI buzz weighting. Disclaimer: Not guaranteed; for educational use only.');
+    return { ...mockResult.metrics, simulatedWinRate: hypotheticalWinRate };
   }
   return mockResult.metrics;
 }

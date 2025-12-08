@@ -7,7 +7,9 @@ import { Badge } from '@/components/ui/badge';
 import { Play, Pause, TrendingUp, RefreshCw, AlertTriangle, TrendingDown } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { toast } from 'sonner';
-import { fetchLivePrice } from '@/lib/trading';
+import { fetchLivePrice, Signal } from '@/lib/trading';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Tooltip as ShadTooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 interface Fill { timestamp: number; price: number; size: number; side: 'buy' | 'sell'; }
 interface Position { entryPrice: number; size: number; pnl: number; peakPrice: number; }
 interface PaperTradingMonitorProps { symbol: string; exchange: string; }
@@ -26,7 +28,7 @@ const containerVariants = {
   }
 };
 export const PaperTradingMonitor = forwardRef<
-  { placeOrder: (side: 'buy' | 'sell') => void },
+  { placeOrder: (side: 'buy' | 'sell', signal?: Signal) => void },
   PaperTradingMonitorProps
 >(({ symbol, exchange }, ref) => {
   const [isActive, setIsActive] = useState(false);
@@ -58,7 +60,10 @@ export const PaperTradingMonitor = forwardRef<
   const updatePriceAndPosition = useCallback(async () => {
     try {
       const newPrice = await fetchLivePrice({ exchange, symbol });
-      if (newPrice === null) return;
+      if (newPrice === null) {
+        toast.warning("Price fetch failed, using last known.");
+        return;
+      }
       lastPrice.current = newPrice;
       if (position?.entryPrice) {
         const newPnl = (newPrice - position.entryPrice) * (position.size || 1);
@@ -87,10 +92,15 @@ export const PaperTradingMonitor = forwardRef<
     lastPrice.current = 0;
     toast.info("Paper trading simulation has been reset.");
   };
-  const placeOrder = useCallback((side: 'buy' | 'sell') => {
+  const placeOrder = useCallback((side: 'buy' | 'sell', signal?: Signal) => {
     if (!isActive) {
       toast.info("Start the monitor to place trades.");
       return;
+    }
+    if (signal && signal.confidence > 80) {
+      toast.success(`AI Autonomous Execute: ${side.toUpperCase()}`, {
+        description: "High-confidence signal from council. Simulated win rate boost applied (disclaimer: not guaranteed)."
+      });
     }
     if (!isAlpacaConfigured) {
       const price = lastPrice.current || 100 + Math.random() * 2 - 1;
@@ -125,14 +135,14 @@ export const PaperTradingMonitor = forwardRef<
             <Button onClick={resetSimulation} size="sm" variant="outline" className="hover:scale-105 active:scale-95 transition-transform"><RefreshCw className="w-4 h-4 mr-2" /> Reset</Button>
           </div>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-6 min-w-0">
           <div className="space-y-4">
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-base font-medium flex items-center gap-2 text-muted-foreground"><TrendingUp className="w-5 h-5" /> Current Position</CardTitle></CardHeader>
               <CardContent>
                 {position ? (
                   <>
-                    <div className={`text-3xl font-bold ${position.pnl >= 0 ? 'text-green-500' : 'text-red-500'}`} role="status">
+                    <div className={`text-3xl font-bold ${position.pnl >= 0 ? 'text-green-500' : 'text-red-500'}`} role="status" aria-label={`Current PnL: ${position.pnl.toFixed(2)}`}>
                       <Badge variant={position.pnl >= 0 ? 'default' : 'destructive'} className={position.pnl >= 0 ? 'bg-green-500/20 text-green-700' : 'bg-red-500/20 text-red-700'}>
                         {position.pnl >= 0 ? <TrendingUp className="w-4 h-4 mr-1" /> : <TrendingDown className="w-4 h-4 mr-1" />}
                         ${position.pnl.toFixed(2)}
@@ -144,6 +154,7 @@ export const PaperTradingMonitor = forwardRef<
               </CardContent>
             </Card>
             <div className="h-48 md:h-64">
+              {!isActive && !position ? <Skeleton className="h-full w-full rounded-lg" /> :
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={pnlHistory}>
                   <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
@@ -151,28 +162,29 @@ export const PaperTradingMonitor = forwardRef<
                   <ReferenceLine y={0} stroke="hsl(var(--border))" strokeDasharray="3 3" />
                   <Line type="monotone" dataKey="pnl" stroke={position && position.pnl >= 0 ? '#22c55e' : '#ef4444'} strokeWidth={2} dot={false} />
                 </LineChart>
-              </ResponsiveContainer>
+              </ResponsiveContainer>}
             </div>
             <div className="flex gap-2">
               <Button onClick={() => placeOrder('buy')} className="w-full bg-green-600 hover:bg-green-700 hover:scale-105 active:scale-95 transition-all">Market Buy</Button>
               <Button onClick={() => placeOrder('sell')} className="w-full bg-red-600 hover:bg-red-700 hover:scale-105 active:scale-95 transition-all">Market Sell</Button>
             </div>
           </div>
-          <div>
+          <div className="overflow-hidden">
             <h3 className="text-lg font-semibold mb-2">Fill History</h3>
             <Card className="h-80 overflow-y-auto">
+              {!isActive && fills.length === 0 ? <Skeleton className="h-full w-full" /> :
               <Table aria-label="Recent fills">
                 <TableHeader><TableRow><TableHead>Time</TableHead><TableHead>Side</TableHead><TableHead className="text-right">Price</TableHead></TableRow></TableHeader>
                 <motion.tbody variants={containerVariants} initial="hidden" animate="visible">
-                  {fills.map((fill, index) => (
-                    <motion.tr variants={fadeInUp} key={fill.timestamp} transition={{ delay: index * 0.1 }}>
+                  {fills.map((fill) => (
+                    <motion.tr variants={fadeInUp} key={fill.timestamp}>
                       <TableCell>{new Date(fill.timestamp).toLocaleTimeString()}</TableCell>
                       <TableCell><Badge variant={fill.side === 'buy' ? 'default' : 'destructive'} className={fill.side === 'buy' ? 'bg-green-500/20 text-green-700' : 'bg-red-500/20 text-red-700'}>{fill.side}</Badge></TableCell>
                       <TableCell className="text-right">${fill.price.toFixed(2)}</TableCell>
                     </motion.tr>
                   ))}
                 </motion.tbody>
-              </Table>
+              </Table>}
             </Card>
           </div>
         </CardContent>

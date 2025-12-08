@@ -224,6 +224,10 @@ export default {
         'chart-pulse': {
           '0%, 100%': { opacity: 1 },
           '50%': { opacity: 0.7 }
+        },
+        'stagger': {
+          '0%': { opacity: 0, transform: 'translateY(10px)' },
+          '100%': { opacity: 1, transform: 'translateY(0)' }
         }
   		},
   		animation: {
@@ -235,7 +239,8 @@ export default {
   			float: 'float 3s ease-in-out infinite',
   			'accordion-down': 'accordion-down 0.2s ease-out',
   			'accordion-up': 'accordion-up 0.2s ease-out',
-        'chart-pulse': 'chart-pulse 2s ease-in-out infinite'
+        'chart-pulse': 'chart-pulse 2s ease-in-out infinite',
+        'stagger-children': 'stagger 0.1s ease-out'
   		},
   		backgroundImage: {
   			'gradient-rainbow': 'linear-gradient(135deg, #667eea 0%, #764ba2 25%, #f093fb 50%, #f5576c 75%, #4facfe 100%)',
@@ -254,6 +259,10 @@ export default {
         '.win-rate-high': {
           '@apply bg-yellow-500/20 text-yellow-700 dark:bg-yellow-500/10 dark:text-yellow-400 border border-yellow-500/20 font-semibold px-3 py-1 rounded-full text-sm': {},
         },
+        '.touch-min': {
+          'min-height': '44px',
+          'min-width': '44px',
+        }
       })
     })
   ]

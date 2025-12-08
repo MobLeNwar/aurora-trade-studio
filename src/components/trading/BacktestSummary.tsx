@@ -6,6 +6,7 @@ import { ArrowUp, ArrowDown, Percent, Hash, Target, TrendingDown, AlertTriangle,
 import { BarChart, Bar, ResponsiveContainer, XAxis, YAxis } from 'recharts';
 import { BacktestMetrics, MonteCarloResult, Signal } from '@/lib/trading';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 interface BacktestSummaryProps {
   metrics: BacktestMetrics;
   monteCarlo?: MonteCarloResult | null;
@@ -18,18 +19,18 @@ const metricCardVariants = {
   hidden: { opacity: 0, y: 20 },
   visible: { opacity: 1, y: 0 }
 };
-const MetricCard = ({ title, value, icon, isPositive, isPercentage = false, isCurrency = false, colorClass: customColor }: { title: string; value: number; icon: React.ReactNode; isPositive?: boolean; isPercentage?: boolean; isCurrency?: boolean; colorClass?: string; }) => {
+const MetricCard = ({ title, value, icon, isPositive, isPercentage = false, isCurrency = false, colorClass: customColor, ariaLabel }: { title: string; value: number; icon: React.ReactNode; isPositive?: boolean; isPercentage?: boolean; isCurrency?: boolean; colorClass?: string; ariaLabel?: string; }) => {
   const formattedValue = isPercentage ? formatPercent(value) : isCurrency ? formatCurrency(value) : formatNumber(value);
   const colorClass = customColor || (isPositive === undefined ? 'text-foreground' : isPositive ? 'text-green-500' : 'text-red-500');
   return (
     <motion.div variants={metricCardVariants}>
-      <Card className="shadow-soft hover:shadow-md transition-shadow duration-300 border-border/80 rounded-2xl">
+      <Card className="shadow-soft hover:shadow-md transition-shadow duration-300 border-border/80 rounded-2xl min-h-[80px]">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
           {icon}
         </CardHeader>
         <CardContent>
-          <div className={`text-2xl font-bold ${colorClass}`}>{formattedValue}</div>
+          <div className={`text-2xl font-bold ${colorClass}`} aria-label={ariaLabel}>{formattedValue}</div>
         </CardContent>
       </Card>
     </motion.div>
@@ -51,7 +52,8 @@ export function BacktestSummary({ metrics, monteCarlo, latestSignal }: BacktestS
       value: buzz,
       icon: <MessageSquare className="h-4 w-4 text-muted-foreground" />,
       isPositive: buzz > 0,
-      colorClass: buzz > 0.5 ? 'text-green-500' : buzz < -0.5 ? 'text-red-500' : 'text-gray-500'
+      colorClass: buzz > 0.5 ? 'text-green-500' : buzz < -0.5 ? 'text-red-500' : 'text-gray-500',
+      ariaLabel: `Social buzz score: ${buzz.toFixed(2)}`
     } as any);
   }
   const mcMetrics = monteCarlo ? [
@@ -97,10 +99,18 @@ export function BacktestSummary({ metrics, monteCarlo, latestSignal }: BacktestS
                 <Badge variant={latestSignal.vote === 'buy' ? 'default' : latestSignal.vote === 'sell' ? 'destructive' : 'secondary'} className={latestSignal.vote === 'buy' ? 'bg-green-500/20 text-green-700 dark:bg-green-500/10 dark:text-green-400' : latestSignal.vote === 'sell' ? 'bg-red-500/20 text-red-700 dark:bg-red-500/10 dark:text-red-400' : ''}>
                   {latestSignal.vote.toUpperCase()} ({latestSignal.confidence.toFixed(1)}%)
                 </Badge>
-                {latestSignal.confidence > 80 && (
+                {latestSignal.confidence >= 80 && metrics.winRate >= 0.8 && (
                   <div className="mt-2">
-                    <Badge className="win-rate-high">Potential 80%+ Win Rate</Badge>
-                    <p className="text-xs text-muted-foreground mt-1">Simulated; Not Guaranteed.</p>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger>
+                          <Badge className="win-rate-high">80%+ Simulated Win Rate</Badge>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Disclaimer: This is a simulation based on historical data and AI analysis. No guarantees of future performance. Not financial advice.</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   </div>
                 )}
               </CardContent>

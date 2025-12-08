@@ -18,7 +18,7 @@ import { Toaster, toast } from 'sonner';
 import { Link } from 'react-router-dom';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { ErrorBoundary } from 'react-error-boundary';
 import fallbackCandlesData from '@/pages/TradingSimulatorData.json';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -30,7 +30,7 @@ const initialStrategy: Strategy = {
   risk: { positionSizePercent: 100, stopLossPercent: 2, slippagePercent: 0.05, feePercent: 0.1, trailingStopPercent: 0 },
 };
 type PaperTradingMonitorHandle = {
-  placeOrder: (side: 'buy' | 'sell') => void;
+  placeOrder: (side: 'buy' | 'sell', signal?: Signal) => void;
 };
 export default function TradingDashboard() {
   const [strategy, setStrategy] = useState<Strategy>(initialStrategy);
@@ -198,7 +198,7 @@ export default function TradingDashboard() {
       });
     };
     const handleAutoExecute = (sig: Signal) => {
-      monitorRef.current?.placeOrder(sig.vote as 'buy' | 'sell');
+      monitorRef.current?.placeOrder(sig.vote as 'buy' | 'sell', sig);
       toast.info(`High-confidence signal detected. Auto-placing paper trade for ${sig.vote}.`);
     };
     bot.on('signal', handleSignal);
@@ -254,6 +254,22 @@ export default function TradingDashboard() {
     if (regime === 'bear') return 'bg-red-500/20 text-red-700 dark:text-red-400';
     return 'bg-gray-500/20 text-gray-700 dark:text-gray-400';
   };
+  const handleValidateSignal = () => {
+    if (signals[0]) {
+      const validation = validateSignal(strategy, signals[0], candles);
+      if (validation.simulatedWinRate && validation.simulatedWinRate >= 0.8) {
+        toast.warning("Simulated 80%+ Win Rate Achieved", {
+          description: "This is hypothetical based on backtest data + AI signals. Past performance does not guarantee future results. Trade responsibly. No financial advice provided."
+        });
+      } else {
+        toast.info(`Signal Validation: Win Rate is ${(validation.winRate * 100).toFixed(1)}%`, {
+          description: `This signal appears ${validation.winRate > 0.5 ? 'strong' : 'weak'} against the current strategy.`
+        });
+      }
+    } else {
+      toast.info("No signal to validate.");
+    }
+  };
   return (
     <div className="min-h-screen bg-muted/30 dark:bg-background/50">
       <header className="sticky top-0 z-30 flex h-14 items-center gap-4 border-b bg-background/80 backdrop-blur-lg px-4 sm:px-6">
@@ -265,86 +281,84 @@ export default function TradingDashboard() {
       <main>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="py-8 md:py-10 lg:py-12">
-            <ErrorBoundary>
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                <div className="lg:col-span-8 space-y-6">
-                  <Card className="shadow-soft rounded-2xl">
-                    <CardHeader><CardTitle>Market Data</CardTitle></CardHeader>
-                    <CardContent className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                      <div className="flex-1"><Select value={exchange} onValueChange={setExchange}><SelectTrigger><SelectValue placeholder="Select Exchange" /></SelectTrigger><SelectContent><SelectItem value="binance">Binance</SelectItem><SelectItem value="coinbasepro">Coinbase Pro</SelectItem><SelectItem value="kraken">Kraken</SelectItem></SelectContent></Select></div>
-                      <div className="flex-1"><Select value={symbol} onValueChange={setSymbol}><SelectTrigger><SelectValue placeholder="Select Symbol" /></SelectTrigger><SelectContent><SelectItem value="BTC/USDT">BTC/USDT</SelectItem><SelectItem value="ETH/USDT">ETH/USDT</SelectItem><SelectItem value="SOL/USDT">SOL/USDT</SelectItem></SelectContent></Select></div>
-                      <CsvUploader onDataLoaded={setCandles} />
-                    </CardContent>
-                  </Card>
-                  <AnimatePresence>{backtestResult && <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}><BacktestSummary metrics={backtestResult.metrics} monteCarlo={monteCarloResult} latestSignal={signals[0]} /></motion.div>}</AnimatePresence>
-                  <Card className="shadow-soft rounded-2xl overflow-hidden">
-                    <CardHeader className="flex flex-row items-center justify-between"><CardTitle>Performance</CardTitle><div className="flex items-center gap-2">{isFetchingData && <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />}<Button variant="outline" size="sm" onClick={handleExport} disabled={!backtestResult}><Download className="w-4 h-4 mr-2" /> Export</Button></div></CardHeader>
-                    <CardContent className="h-[400px] p-0">
-                      {isFetchingData ? <Skeleton className="w-full h-full" /> :
-                      <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={backtestResult?.equityCurve ?? candles.map((c, i) => ({ date: new Date(c.timestamp).toLocaleDateString(), value: 10000 + i * 10 }))}>
-                          <defs><linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#F38020" stopOpacity={0.8}/><stop offset="95%" stopColor="#F38020" stopOpacity={0}/></linearGradient></defs>
-                          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                          <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} />
-                          <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} domain={['dataMin', 'dataMax']} />
-                          <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))', borderRadius: 'var(--radius)' }} />
-                          <Area type="monotone" dataKey="value" stroke="#F38020" fillOpacity={1} fill="url(#colorEquity)" name="Equity" />
-                        </AreaChart>
-                      </ResponsiveContainer>}
-                    </CardContent>
-                  </Card>
-                  <Tabs defaultValue="trades" value={activeTab} onValueChange={setActiveTab} role="tablist" aria-label="Trading views"><TabsList><TabsTrigger value="trades">Trades</TabsTrigger><TabsTrigger value="paper-trading">Paper Trading</TabsTrigger><TabsTrigger value="autonomous">Autonomous Bot</TabsTrigger><TabsTrigger value="trends">Trends View</TabsTrigger><TabsTrigger value="council">Council Room</TabsTrigger><TabsTrigger value="library">Library</TabsTrigger></TabsList>
-                    <AnimatePresence mode="wait">
-                      <motion.div key={activeTab} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.2 }}>
-                        <TabsContent value="trades" forceMount={activeTab === 'trades' ? true : undefined} className={activeTab !== 'trades' ? 'hidden' : ''}><TradeTable trades={backtestResult?.trades || []} /></TabsContent>
-                        <TabsContent value="paper-trading" forceMount={activeTab === 'paper-trading' ? true : undefined} className={activeTab !== 'paper-trading' ? 'hidden' : ''}><PaperTradingMonitor ref={monitorRef} symbol={symbol} exchange={exchange} /></TabsContent>
-                        <TabsContent value="autonomous" forceMount={activeTab === 'autonomous' ? true : undefined} className={activeTab !== 'autonomous' ? 'hidden' : ''}>
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-6 mt-4">
-                            <div className="lg:col-span-8 space-y-6">
-                              <Card><CardHeader><CardTitle>Recent Autonomous Signals</CardTitle></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Time</TableHead><TableHead>Symbol</TableHead><TableHead>Vote</TableHead><TableHead>Confidence</TableHead><TableHead>Rationale</TableHead></TableRow></TableHeader><TableBody>{signals.length > 0 ? signals.map((sig, i) => (<motion.tr key={sig.timestamp} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.1 }}><TableCell>{new Date(sig.timestamp).toLocaleTimeString()}</TableCell><TableCell>{sig.symbol}</TableCell><TableCell><Badge variant={sig.vote === 'buy' ? 'default' : sig.vote === 'sell' ? 'destructive' : 'secondary'} className={sig.vote === 'buy' ? 'bg-green-500/20 text-green-700 dark:bg-green-500/10 dark:text-green-400' : sig.vote === 'sell' ? 'bg-red-500/20 text-red-700 dark:bg-red-500/10 dark:text-red-400' : ''}>{sig.vote.toUpperCase()}</Badge></TableCell><TableCell>{sig.confidence.toFixed(1)}%</TableCell><TableCell className="max-w-xs truncate" title={sig.rationale}>{sig.rationale}</TableCell></motion.tr>)) : <TableRow><TableCell colSpan={5} className="text-center h-24">No signals received yet. Start the bot to begin.</TableCell></TableRow>}</TableBody></Table></CardContent></Card>
-                            </div>
-                            <aside className="lg:col-span-4 space-y-6">
-                              <Card><CardHeader><CardTitle>Bot Control</CardTitle></CardHeader><CardContent className="space-y-4"><Button onClick={() => setIsBotActive(true)} disabled={isBotActive} className="w-full"><Play className="w-4 h-4 mr-2" /> Start Scanner</Button><Button onClick={() => setIsBotActive(false)} disabled={!isBotActive} variant="outline" className="w-full"><Pause className="w-4 h-4 mr-2" /> Stop Scanner</Button><Button onClick={() => { if (signals[0]) { const metrics = validateSignal(strategy, signals[0], candles); toast.info(`Signal Validation: Win Rate is ${(metrics.winRate * 100).toFixed(1)}%`, { description: `This signal appears ${metrics.winRate > 0.5 ? 'strong' : 'weak'} against the current strategy.` }); } else { toast.info("No signal to validate."); } }} className="w-full" variant="secondary"><CheckCircle className="w-4 h-4 mr-2" /> Validate Latest Signal</Button></CardContent></Card>
-                              <Card><CardHeader><CardTitle>Signal Distribution</CardTitle></CardHeader><CardContent className="h-[250px]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={voteData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label>{voteData.map((entry, index) => (<Cell key={`cell-${index}`} fill={VOTE_COLORS[index % VOTE_COLORS.length]} />))}</Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer></CardContent></Card>
-                            </aside>
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              <div className="lg:col-span-8 space-y-6">
+                <Card className="shadow-soft rounded-2xl">
+                  <CardHeader><CardTitle>Market Data</CardTitle></CardHeader>
+                  <CardContent className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="flex-1"><Select value={exchange} onValueChange={setExchange}><SelectTrigger><SelectValue placeholder="Select Exchange" /></SelectTrigger><SelectContent><SelectItem value="binance">Binance</SelectItem><SelectItem value="coinbasepro">Coinbase Pro</SelectItem><SelectItem value="kraken">Kraken</SelectItem></SelectContent></Select></div>
+                    <div className="flex-1"><Select value={symbol} onValueChange={setSymbol}><SelectTrigger><SelectValue placeholder="Select Symbol" /></SelectTrigger><SelectContent><SelectItem value="BTC/USDT">BTC/USDT</SelectItem><SelectItem value="ETH/USDT">ETH/USDT</SelectItem><SelectItem value="SOL/USDT">SOL/USDT</SelectItem></SelectContent></Select></div>
+                    <CsvUploader onDataLoaded={setCandles} />
+                  </CardContent>
+                </Card>
+                <AnimatePresence>{backtestResult && <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}><BacktestSummary metrics={backtestResult.metrics} monteCarlo={monteCarloResult} latestSignal={signals[0]} /></motion.div>}</AnimatePresence>
+                <Card className="shadow-soft rounded-2xl overflow-hidden">
+                  <CardHeader className="flex flex-row items-center justify-between"><CardTitle>Performance</CardTitle><div className="flex items-center gap-2">{isFetchingData && <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />}<Button variant="outline" size="sm" onClick={handleExport} disabled={!backtestResult}><Download className="w-4 h-4 mr-2" /> Export</Button></div></CardHeader>
+                  <CardContent className="h-[400px] p-0">
+                    {isFetchingData ? <Skeleton className="w-full h-full" /> :
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={backtestResult?.equityCurve ?? candles.map((c, i) => ({ date: new Date(c.timestamp).toLocaleDateString(), value: 10000 + i * 10 }))}>
+                        <defs><linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#F38020" stopOpacity={0.8}/><stop offset="95%" stopColor="#F38020" stopOpacity={0}/></linearGradient></defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} />
+                        <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} domain={['dataMin', 'dataMax']} />
+                        <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))', borderRadius: 'var(--radius)' }} />
+                        <Area type="monotone" dataKey="value" stroke="#F38020" fillOpacity={1} fill="url(#colorEquity)" name="Equity" />
+                      </AreaChart>
+                    </ResponsiveContainer>}
+                  </CardContent>
+                </Card>
+                <Tabs defaultValue="trades" value={activeTab} onValueChange={setActiveTab} role="tablist" aria-label="Trading views"><TabsList><TabsTrigger value="trades">Trades</TabsTrigger><TabsTrigger value="paper-trading">Paper Trading</TabsTrigger><TabsTrigger value="autonomous">Autonomous Bot</TabsTrigger><TabsTrigger value="trends">Trends View</TabsTrigger><TabsTrigger value="council">Council Room</TabsTrigger><TabsTrigger value="library">Library</TabsTrigger></TabsList>
+                  <AnimatePresence mode="wait">
+                    <motion.div key={activeTab} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.2 }}>
+                      <TabsContent value="trades" forceMount={activeTab === 'trades' ? true : undefined} className={activeTab !== 'trades' ? 'hidden' : ''}><TradeTable trades={backtestResult?.trades || []} /></TabsContent>
+                      <TabsContent value="paper-trading" forceMount={activeTab === 'paper-trading' ? true : undefined} className={activeTab !== 'paper-trading' ? 'hidden' : ''}><PaperTradingMonitor ref={monitorRef} symbol={symbol} exchange={exchange} /></TabsContent>
+                      <TabsContent value="autonomous" forceMount={activeTab === 'autonomous' ? true : undefined} className={activeTab !== 'autonomous' ? 'hidden' : ''}>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-6 mt-4">
+                          <div className="lg:col-span-8 space-y-6">
+                            <Card><CardHeader><CardTitle>Recent Autonomous Signals</CardTitle></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Time</TableHead><TableHead>Symbol</TableHead><TableHead>Vote</TableHead><TableHead>Confidence</TableHead><TableHead>Rationale</TableHead></TableRow></TableHeader><TableBody>{signals.length > 0 ? signals.map((sig, i) => (<motion.tr key={sig.timestamp} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.1 }}><TableCell>{new Date(sig.timestamp).toLocaleTimeString()}</TableCell><TableCell>{sig.symbol}</TableCell><TableCell><Badge variant={sig.vote === 'buy' ? 'default' : sig.vote === 'sell' ? 'destructive' : 'secondary'} className={sig.vote === 'buy' ? 'bg-green-500/20 text-green-700 dark:bg-green-500/10 dark:text-green-400' : sig.vote === 'sell' ? 'bg-red-500/20 text-red-700 dark:bg-red-500/10 dark:text-red-400' : ''}>{sig.vote.toUpperCase()}</Badge></TableCell><TableCell>{sig.confidence.toFixed(1)}%</TableCell><TableCell className="max-w-xs truncate" title={sig.rationale}>{sig.rationale}</TableCell></motion.tr>)) : <TableRow><TableCell colSpan={5} className="text-center h-24">No signals received yet. Start the bot to begin.</TableCell></TableRow>}</TableBody></Table></CardContent></Card>
                           </div>
-                        </TabsContent>
-                        <TabsContent value="trends" forceMount={activeTab === 'trends' ? true : undefined} className={activeTab !== 'trends' ? 'hidden' : ''}>
-                          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-4">
-                            <div className="lg:col-span-8 space-y-6">
-                              <Card><CardHeader><CardTitle>Regime Analysis</CardTitle></CardHeader><CardContent><div className="grid grid-cols-1 md:grid-cols-3 gap-4">{['1h', '4h', '1d'].map((tf, i) => (<motion.div key={tf} initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: i * 0.1 }} className={`p-4 rounded-lg text-center ${getRegimeColor(regimes[tf] || 'chop')}`}><p className="font-bold text-lg">{tf.toUpperCase()}</p><p className="text-sm capitalize">{regimes[tf] || 'Calculating...'}</p></motion.div>))}</div></CardContent></Card>
-                              <Card><CardHeader><CardTitle>RSI (14)</CardTitle></CardHeader><CardContent className="h-[200px] p-0"><ResponsiveContainer width="100%" height="100%"><AreaChart data={indicatorData.rsi}><defs><linearGradient id="colorRsi" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#22c55e" stopOpacity={0.8}/><stop offset="95%" stopColor="#22c55e" stopOpacity={0}/></linearGradient></defs><Tooltip /><YAxis domain={[0, 100]} /><ReferenceLine y={70} stroke="red" strokeDasharray="3 3" /><ReferenceLine y={30} stroke="green" strokeDasharray="3 3" /><Area type="monotone" dataKey="value" stroke="#22c55e" fill="url(#colorRsi)" /></AreaChart></ResponsiveContainer></CardContent></Card>
-                              <Card><CardHeader><CardTitle>MACD (12, 26, 9)</CardTitle></CardHeader><CardContent className="h-[200px] p-0"><ResponsiveContainer width="100%" height="100%"><LineChart data={indicatorData.macd}><Tooltip /><Line type="monotone" dataKey="MACD" stroke="#ef4444" dot={false} /><Line type="monotone" dataKey="signal" stroke="#f59e0b" dot={false} /><ReferenceLine y={0} stroke="hsl(var(--border))" /></LineChart></ResponsiveContainer></CardContent></Card>
-                            </div>
-                            <aside className="lg:col-span-4 space-y-6">
-                              <Card><CardHeader><CardTitle>Multi-Timeframe Price</CardTitle></CardHeader><CardContent className="h-[300px] p-0"><ResponsiveContainer width="100%" height="100%"><LineChart data={trendData}><Tooltip /><XAxis dataKey="timestamp" tickFormatter={(ts) => new Date(ts).toLocaleDateString()} /><YAxis domain={['auto', 'auto']} /><Line type="monotone" dataKey="price1h" stroke="#F38020" name="1h" dot={false} /><Line type="monotone" dataKey="price4h" stroke="#4F46E5" name="4h" dot={false} /><Line type="monotone" dataKey="price1d" stroke="#06B6D4" name="1d" dot={false} /></LineChart></ResponsiveContainer></CardContent></Card>
-                            </aside>
+                          <aside className="lg:col-span-4 space-y-6">
+                            <Card><CardHeader><CardTitle>Bot Control</CardTitle></CardHeader><CardContent className="space-y-4"><Button onClick={() => setIsBotActive(true)} disabled={isBotActive} className="w-full"><Play className="w-4 h-4 mr-2" /> Start Scanner</Button><Button onClick={() => setIsBotActive(false)} disabled={!isBotActive} variant="outline" className="w-full"><Pause className="w-4 h-4 mr-2" /> Stop Scanner</Button><Button onClick={handleValidateSignal} className="w-full" variant="secondary"><CheckCircle className="w-4 h-4 mr-2" /> Validate Latest Signal</Button></CardContent></Card>
+                            <Card><CardHeader><CardTitle>Signal Distribution</CardTitle></CardHeader><CardContent className="h-[250px]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={voteData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label>{voteData.map((entry, index) => (<Cell key={`cell-${index}`} fill={VOTE_COLORS[index % VOTE_COLORS.length]} />))}</Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer></CardContent></Card>
+                          </aside>
+                        </div>
+                      </TabsContent>
+                      <TabsContent value="trends" forceMount={activeTab === 'trends' ? true : undefined} className={activeTab !== 'trends' ? 'hidden' : ''}>
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-4">
+                          <div className="lg:col-span-8 space-y-6">
+                            <Card><CardHeader><CardTitle>Regime Analysis</CardTitle></CardHeader><CardContent><div className="grid grid-cols-1 md:grid-cols-3 gap-4">{['1h', '4h', '1d'].map((tf, i) => (<motion.div key={tf} initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: i * 0.1 }} className={`p-4 rounded-lg text-center min-h-[60px] ${getRegimeColor(regimes[tf] || 'chop')}`} aria-label={`Market regime for ${tf} timeframe`}><p className="font-bold text-lg">{tf.toUpperCase()}</p><p className="text-sm capitalize">{regimes[tf] || 'Calculating...'}</p></motion.div>))}</div></CardContent></Card>
+                            <Card><CardHeader><CardTitle>RSI (14)</CardTitle></CardHeader><CardContent className="h-[200px] p-0"><ResponsiveContainer width="100%" height="100%"><AreaChart data={indicatorData.rsi}><defs><linearGradient id="colorRsi" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#22c55e" stopOpacity={0.8}/><stop offset="95%" stopColor="#22c55e" stopOpacity={0}/></linearGradient></defs><Tooltip /><YAxis domain={[0, 100]} /><ReferenceLine y={70} stroke="red" strokeDasharray="3 3" /><ReferenceLine y={30} stroke="green" strokeDasharray="3 3" /><Area type="monotone" dataKey="value" stroke="#22c55e" fill="url(#colorRsi)" /></AreaChart></ResponsiveContainer></CardContent></Card>
+                            <Card><CardHeader><CardTitle>MACD (12, 26, 9)</CardTitle></CardHeader><CardContent className="h-[200px] p-0"><ResponsiveContainer width="100%" height="100%"><LineChart data={indicatorData.macd}><Tooltip /><Line type="monotone" dataKey="MACD" stroke="#ef4444" dot={false} /><Line type="monotone" dataKey="signal" stroke="#f59e0b" dot={false} /><ReferenceLine y={0} stroke="hsl(var(--border))" /></LineChart></ResponsiveContainer></CardContent></Card>
                           </div>
-                        </TabsContent>
-                        <TabsContent value="council" forceMount={activeTab === 'council' ? true : undefined} className={activeTab !== 'council' ? 'hidden' : ''}>
-                          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-4">
-                            <div className="lg:col-span-8 space-y-6">
-                              <Card><CardHeader><CardTitle>Council Vote Distribution</CardTitle></CardHeader><CardContent className="h-[300px]">{isCouncilLoading ? <Skeleton className="w-full h-full" /> : <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={councilData?.votes?.map((v: any) => ({ name: v.role, value: v.confidence })) || []} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} label>{(councilData?.votes || []).map((entry: any, index: number) => (<Cell key={`cell-${index}`} fill={COUNCIL_COLORS[index % COUNCIL_COLORS.length]} />))}</Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer>}</CardContent></Card>
-                              <Card><CardHeader><CardTitle>Debate Transcript</CardTitle></CardHeader><CardContent>{isCouncilLoading ? <Skeleton className="w-full h-24" /> : <Accordion type="single" collapsible className="w-full"><AccordionItem value="transcript"><AccordionTrigger>View Council Debate</AccordionTrigger><AccordionContent className="text-sm space-y-2 whitespace-pre-wrap font-mono">{councilData?.aggregatedRationale || 'No transcript available.'}</AccordionContent></AccordionItem></Accordion>}</CardContent></Card>
-                            </div>
-                            <aside className="lg:col-span-4 space-y-6">
-                              <Card><CardHeader><CardTitle>Council Controls</CardTitle></CardHeader><CardContent><Select value={councilSymbol} onValueChange={setCouncilSymbol}><SelectTrigger><SelectValue placeholder="Select Symbol" /></SelectTrigger><SelectContent><SelectItem value="BTC/USDT">BTC/USDT</SelectItem><SelectItem value="ETH/USDT">ETH/USDT</SelectItem><SelectItem value="SOL/USDT">SOL/USDT</SelectItem></SelectContent></Select><Button onClick={loadCouncil} className="w-full mt-4" disabled={isCouncilLoading}>{isCouncilLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Users className="w-4 h-4 mr-2" />} Convene Council</Button></CardContent></Card>
-                            </aside>
+                          <aside className="lg:col-span-4 space-y-6">
+                            <Card><CardHeader><CardTitle>Multi-Timeframe Price</CardTitle></CardHeader><CardContent className="h-[300px] p-0"><ResponsiveContainer width="100%" height="100%"><LineChart data={trendData}><Tooltip /><XAxis dataKey="timestamp" tickFormatter={(ts) => new Date(ts).toLocaleDateString()} /><YAxis domain={['auto', 'auto']} /><Line type="monotone" dataKey="price1h" stroke="#F38020" name="1h" dot={false} /><Line type="monotone" dataKey="price4h" stroke="#4F46E5" name="4h" dot={false} /><Line type="monotone" dataKey="price1d" stroke="#06B6D4" name="1d" dot={false} /></LineChart></ResponsiveContainer></CardContent></Card>
+                          </aside>
+                        </div>
+                      </TabsContent>
+                      <TabsContent value="council" forceMount={activeTab === 'council' ? true : undefined} className={activeTab !== 'council' ? 'hidden' : ''}>
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-4">
+                          <div className="lg:col-span-8 space-y-6">
+                            <Card><CardHeader><CardTitle>Council Vote Distribution</CardTitle></CardHeader><CardContent className="h-[300px]">{isCouncilLoading ? <Skeleton className="w-full h-full" /> : <ResponsiveContainer width="100%" height="100%"><PieChart aria-label="Council vote pie chart"><Pie data={councilData?.votes?.map((v: any) => ({ name: v.role, value: v.confidence })) || []} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} label>{(councilData?.votes || []).map((entry: any, index: number) => (<Cell key={`cell-${index}`} fill={COUNCIL_COLORS[index % COUNCIL_COLORS.length]} />))}</Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer>}</CardContent></Card>
+                            <Card><CardHeader><CardTitle>Debate Transcript</CardTitle></CardHeader><CardContent>{isCouncilLoading ? <Skeleton className="w-full h-24" /> : <Accordion type="single" collapsible className="w-full"><AccordionItem value="transcript"><AccordionTrigger>View Council Debate</AccordionTrigger><AccordionContent className="text-sm space-y-2 whitespace-pre-wrap font-mono">{councilData?.aggregatedRationale || 'No transcript available.'}</AccordionContent></AccordionItem></Accordion>}</CardContent></Card>
                           </div>
-                        </TabsContent>
-                        <TabsContent value="library" forceMount={activeTab === 'library' ? true : undefined} className={activeTab !== 'library' ? 'hidden' : ''}><StrategyLibrary currentStrategy={strategy} onLoadStrategy={setStrategy} /></TabsContent>
-                      </motion.div>
-                    </AnimatePresence>
-                  </Tabs>
-                </div>
-                <aside className="lg:col-span-4 space-y-6">
-                  <Tabs defaultValue="strategy" className="w-full"><TabsList className="grid w-full grid-cols-2"><TabsTrigger value="strategy"><Settings className="w-4 h-4 mr-2" />Strategy</TabsTrigger><TabsTrigger value="ai-explorer"><Bot className="w-4 h-4 mr-2" />AI Explorer</TabsTrigger></TabsList>
-                    <TabsContent value="strategy" asChild><motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}><StrategyCard strategy={strategy} onStrategyChange={setStrategy} onRunBacktest={handleRunBacktest} isLoading={isLoading} /><Button onClick={handleOptimize} disabled={isOptimizing} className="w-full mt-4"><BrainCircuit className="w-4 h-4 mr-2" /> {isOptimizing ? 'Optimizing...' : 'Optimize Parameters'}</Button><Button onClick={() => setIsAutoBacktesting(!isAutoBacktesting)} variant="outline" className="w-full mt-2"><Clock className="w-4 h-4 mr-2" /> {isAutoBacktesting ? 'Stop Scheduler' : 'Schedule Backtests'}</Button></motion.div></TabsContent>
-                    <TabsContent value="ai-explorer" asChild><motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}><ChatAssistantWrapper strategy={strategy} backtestResult={backtestResult} /></motion.div></TabsContent>
-                  </Tabs>
-                </aside>
+                          <aside className="lg:col-span-4 space-y-6">
+                            <Card><CardHeader><CardTitle>Council Controls</CardTitle></CardHeader><CardContent><Select value={councilSymbol} onValueChange={setCouncilSymbol}><SelectTrigger><SelectValue placeholder="Select Symbol" /></SelectTrigger><SelectContent><SelectItem value="BTC/USDT">BTC/USDT</SelectItem><SelectItem value="ETH/USDT">ETH/USDT</SelectItem><SelectItem value="SOL/USDT">SOL/USDT</SelectItem></SelectContent></Select><Button onClick={loadCouncil} className="w-full mt-4" disabled={isCouncilLoading} aria-label="Convene AI Council">{isCouncilLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Users className="w-4 h-4 mr-2" />} Convene Council</Button></CardContent></Card>
+                          </aside>
+                        </div>
+                      </TabsContent>
+                      <TabsContent value="library" forceMount={activeTab === 'library' ? true : undefined} className={activeTab !== 'library' ? 'hidden' : ''}><StrategyLibrary currentStrategy={strategy} onLoadStrategy={setStrategy} /></TabsContent>
+                    </motion.div>
+                  </AnimatePresence>
+                </Tabs>
               </div>
-            </ErrorBoundary>
+              <aside className="lg:col-span-4 space-y-6">
+                <Tabs defaultValue="strategy" className="w-full"><TabsList className="grid w-full grid-cols-2"><TabsTrigger value="strategy"><Settings className="w-4 h-4 mr-2" />Strategy</TabsTrigger><TabsTrigger value="ai-explorer"><Bot className="w-4 h-4 mr-2" />AI Explorer</TabsTrigger></TabsList>
+                  <TabsContent value="strategy" asChild><motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}><StrategyCard strategy={strategy} onStrategyChange={setStrategy} onRunBacktest={handleRunBacktest} isLoading={isLoading} /><Button onClick={handleOptimize} disabled={isOptimizing} className="w-full mt-4"><BrainCircuit className="w-4 h-4 mr-2" /> {isOptimizing ? 'Optimizing...' : 'Optimize Parameters'}</Button><Button onClick={() => setIsAutoBacktesting(!isAutoBacktesting)} variant="outline" className="w-full mt-2"><Clock className="w-4 h-4 mr-2" /> {isAutoBacktesting ? 'Stop Scheduler' : 'Schedule Backtests'}</Button></motion.div></TabsContent>
+                  <TabsContent value="ai-explorer" asChild><motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}><ChatAssistantWrapper strategy={strategy} backtestResult={backtestResult} /></motion.div></TabsContent>
+                </Tabs>
+              </aside>
+            </div>
           </div>
         </div>
       </main>
