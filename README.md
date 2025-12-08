@@ -1,6 +1,6 @@
 # Aurora Trade Studio
 
-[![[cloudflarebutton]]](https://workers.cloudflare.com)
+[![[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/MobLeNwar/aurora-trade-studio)]](https://workers.cloudflare.com)
 
 Aurora Trade Studio is a visually exceptional, Cloudflare edge-powered frontend for exploring, backtesting, and interactively prototyping AI-assisted trading strategies. It pairs a stunning, mobile-first UI built with shadcn/ui + Tailwind with Cloudflare Agents (Durable Objects) AI backend to explain trade signals, generate strategy variants, run client-side backtests and simulations (mock data initially), and present a polished paper-trading monitor. The app emphasizes transparent metrics like win-rate, expectancy, and drawdown, with rigorous backtesting and intuitive UX for responsible strategy iteration.
 
@@ -29,7 +29,7 @@ Aurora Trade Studio is a visually exceptional, Cloudflare edge-powered frontend 
 
 To get started quickly, fork this repository and deploy to Cloudflare Workers:
 
-[[cloudflarebutton]]
+[[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/MobLeNwar/aurora-trade-studio)]
 
 ## Installation
 
@@ -120,7 +120,7 @@ Deploy to Cloudflare Workers for edge-first performance:
 
 For one-click deployment:
 
-[[cloudflarebutton]]
+[[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/MobLeNwar/aurora-trade-studio)]
 
 **Post-Deployment Notes**:
 - Custom domain: Configure in Worker Settings.
