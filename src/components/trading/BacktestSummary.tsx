@@ -2,7 +2,7 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ArrowUp, ArrowDown, Percent, Hash, Target, TrendingDown, AlertTriangle, TrendingUp as TrendingUpIcon, Bot } from 'lucide-react';
+import { ArrowUp, ArrowDown, Percent, Hash, Target, TrendingDown, AlertTriangle, TrendingUp as TrendingUpIcon, Bot, MessageSquare } from 'lucide-react';
 import { BarChart, Bar, ResponsiveContainer, XAxis, YAxis } from 'recharts';
 import { BacktestMetrics, MonteCarloResult, Signal } from '@/lib/trading';
 import { Badge } from '@/components/ui/badge';
@@ -18,9 +18,9 @@ const metricCardVariants = {
   hidden: { opacity: 0, y: 20 },
   visible: { opacity: 1, y: 0 }
 };
-const MetricCard = ({ title, value, icon, isPositive, isPercentage = false, isCurrency = false }: { title: string; value: number; icon: React.ReactNode; isPositive?: boolean; isPercentage?: boolean; isCurrency?: boolean; }) => {
+const MetricCard = ({ title, value, icon, isPositive, isPercentage = false, isCurrency = false, colorClass: customColor }: { title: string; value: number; icon: React.ReactNode; isPositive?: boolean; isPercentage?: boolean; isCurrency?: boolean; colorClass?: string; }) => {
   const formattedValue = isPercentage ? formatPercent(value) : isCurrency ? formatCurrency(value) : formatNumber(value);
-  const colorClass = isPositive === undefined ? 'text-foreground' : isPositive ? 'text-green-500' : 'text-red-500';
+  const colorClass = customColor || (isPositive === undefined ? 'text-foreground' : isPositive ? 'text-green-500' : 'text-red-500');
   return (
     <motion.div variants={metricCardVariants}>
       <Card className="shadow-soft hover:shadow-md transition-shadow duration-300 border-border/80 rounded-2xl">
@@ -43,6 +43,17 @@ export function BacktestSummary({ metrics, monteCarlo, latestSignal }: BacktestS
     { title: 'Profit Factor', value: metrics.profitFactor, icon: <Percent className="h-4 w-4 text-muted-foreground" />, isPositive: metrics.profitFactor > 1 },
     { title: 'Max Drawdown', value: metrics.maxDrawdown, icon: <TrendingDown className="h-4 w-4 text-muted-foreground" />, isPositive: false, isPercentage: true },
   ];
+  const buzzMatch = latestSignal?.rationale.match(/buzz:\s*([\d.-]+)/);
+  const buzz = buzzMatch ? parseFloat(buzzMatch[1]) : null;
+  if (buzz !== null) {
+    summaryMetrics.push({
+      title: 'Social Buzz',
+      value: buzz,
+      icon: <MessageSquare className="h-4 w-4 text-muted-foreground" />,
+      isPositive: buzz > 0,
+      colorClass: buzz > 0.5 ? 'text-green-500' : buzz < -0.5 ? 'text-red-500' : 'text-gray-500'
+    } as any);
+  }
   const mcMetrics = monteCarlo ? [
     { title: 'Mean PnL (MC)', value: monteCarlo.meanPnl, icon: <TrendingUpIcon className="h-4 w-4 text-muted-foreground" />, isPositive: monteCarlo.meanPnl >= 0, isCurrency: true },
     { title: 'Worst DD (MC)', value: monteCarlo.worstDrawdown, icon: <TrendingDown className="h-4 w-4 text-muted-foreground" />, isPositive: false, isPercentage: true },
@@ -61,7 +72,7 @@ export function BacktestSummary({ metrics, monteCarlo, latestSignal }: BacktestS
   return (
     <div role="region" aria-label="Backtest metrics summary" className="space-y-4">
       <motion.div
-        className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5"
+        className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6"
         variants={{ visible: { transition: { staggerChildren: 0.05 } } }}
         initial="hidden"
         animate="visible"

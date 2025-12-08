@@ -122,7 +122,7 @@ export class ChatHandler {
       }
     });
     const votes = await Promise.all(promises);
-    const voteCounts = { buy: 0, sell: 0, hold: 0 };
+    const voteCounts: Record<'buy' | 'sell' | 'hold', number> = { buy: 0, sell: 0, hold: 0 };
     let aggregatedRationale = "AI Council Rationales:\n";
     votes.forEach(v => {
       if (v.vote === 'buy' || v.vote === 'sell' || v.vote === 'hold') {

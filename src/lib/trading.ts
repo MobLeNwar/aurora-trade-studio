@@ -53,15 +53,26 @@ export class AutonomousBot extends SimpleEmitter {
         }
         const data = await res.json();
         if (data.success && data.data.consensus.thresholdMet) {
+          const buzzRes = await fetch('/api/sentiment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol })
+          });
+          const buzzData = await buzzRes.json();
+          const buzz = buzzData.success ? buzzData.data.buzz : 0;
+          let adjustedConfidence = data.data.consensus.majority;
+          if ((data.data.consensus.vote === 'buy' || data.data.consensus.vote === 'sell') && buzz > 0.5) {
+            adjustedConfidence = Math.min(100, adjustedConfidence * 1.05);
+          }
           const signal: Signal = {
             symbol,
             vote: data.data.consensus.vote,
-            confidence: data.data.consensus.majority,
-            rationale: data.data.aggregatedRationale,
+            confidence: adjustedConfidence,
+            rationale: `${data.data.aggregatedRationale} (Social buzz: ${buzz.toFixed(2)})`,
             timestamp: Date.now()
           };
           this.emit('signal', signal);
-          console.log(`Autonomous signal: ${symbol} ${data.data.consensus.vote.toUpperCase()} (${data.data.consensus.majority}%)`);
+          console.log(`Autonomous signal with social filter: ${symbol} ${signal.vote.toUpperCase()} (${signal.confidence.toFixed(1)}%)`);
         }
       } catch (e) {
         console.warn(`Council vote failed for ${symbol}:`, e);
@@ -312,9 +323,11 @@ export function parseCsvData(csvString: string): Candle[] {
 }
 export function validateSignal(strategy: Strategy, signal: Signal, candles: Candle[]): BacktestMetrics {
   const mockResult = runBacktest(strategy, candles.slice(-100));
-  const hypotheticalWinRate = mockResult.metrics.winRate * (signal.confidence / 100);
-  if (hypotheticalWinRate >= 0.8) {
-    console.warn('Disclaimer: Simulated 80%+ win rate based on signal confidence. This is a hypothetical projection and not a guarantee of future performance.');
+  const buzzMatch = signal.rationale.match(/buzz:\s*([\d.-]+)/);
+  const buzz = buzzMatch ? parseFloat(buzzMatch[1]) : 0;
+  const hypotheticalWinRate = mockResult.metrics.winRate * (signal.confidence / 100) * (buzz > 0.5 ? 1.05 : 1);
+  if (hypotheticalWinRate >= 0.9) {
+    console.warn('Disclaimer: Simulated 90%+ win rate with social filter. This is a hypothetical projection with a +5% boost from hype and is not a guarantee of future performance.');
   }
   return mockResult.metrics;
 }

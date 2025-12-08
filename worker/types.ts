@@ -40,7 +40,7 @@ export interface SessionInfo {
   config?: { symbol: string; exchange: string };
 }
 export interface Tool {
-  name: string;
+  name:string;
   description: string;
   parameters: {
     type: string;
@@ -48,5 +48,19 @@ export interface Tool {
     required: string[];
   };
 }
-// Re-export types from frontend for use in worker context
-export type { Candle, Signal } from '../../src/lib/trading';
+// Local definitions to resolve worker build errors
+export interface Candle {
+  timestamp: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+export interface Signal {
+  symbol: string;
+  vote: 'buy' | 'sell' | 'hold';
+  confidence: number;
+  rationale: string;
+  timestamp: number;
+}

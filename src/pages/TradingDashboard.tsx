@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, LineChart, Line, ReferenceLine } from 'recharts';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Zap, Bot, Settings, BrainCircuit, Clock, Loader2, Download, Play, Pause, CheckCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -22,6 +22,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import fallbackCandlesData from '@/pages/TradingSimulatorData.json';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { RSI, MACD, SMA } from 'technicalindicators';
 const initialStrategy: Strategy = {
   type: 'sma-cross',
   params: { shortPeriod: 10, longPeriod: 20 },
@@ -46,6 +47,9 @@ export default function TradingDashboard() {
   const [votes, setVotes] = useState({ buy: 0, sell: 0, hold: 0 });
   const [isBotActive, setIsBotActive] = useState(false);
   const monitorRef = useRef<PaperTradingMonitorHandle>(null);
+  const [trendData, setTrendData] = useState<any[]>([]);
+  const [indicatorData, setIndicatorData] = useState<{ rsi: any[], macd: any[] }>({ rsi: [], macd: [] });
+  const [regimes, setRegimes] = useState<{ [key: string]: string }>({});
   const handleRunBacktest = useCallback((currentStrategy: Strategy) => {
     if (candles.length === 0) {
       toast.error("No historical data available. Please upload CSV or wait for data to fetch.");
@@ -103,6 +107,52 @@ export default function TradingDashboard() {
     };
     loadData();
   }, [symbol, exchange]);
+  const loadTrends = useCallback(async () => {
+    const tfs = ['1h', '4h', '1d'];
+    const multiDataPromises = tfs.map(tf => fetchHistoricalData({ symbol, exchange, timeframe: tf, limit: 100 }));
+    const allData = await Promise.all(multiDataPromises);
+    const trendChartData: any[] = [];
+    const newRegimes: { [key: string]: string } = {};
+    allData.forEach((data, index) => {
+      if (data && data.length > 0) {
+        const tf = tfs[index];
+        const closePrices = data.map(d => d.close);
+        const sma = SMA.calculate({ period: 20, values: closePrices });
+        const rsi = RSI.calculate({ period: 14, values: closePrices });
+        const lastSma = sma[sma.length - 1];
+        const lastRsi = rsi[rsi.length - 1];
+        if (lastSma && lastRsi) {
+          if (data[data.length - 1].close > lastSma && lastRsi > 50) newRegimes[tf] = 'bull';
+          else if (data[data.length - 1].close < lastSma && lastRsi < 50) newRegimes[tf] = 'bear';
+          else newRegimes[tf] = 'chop';
+        }
+        data.forEach((d, i) => {
+          const existing = trendChartData.find(p => p.timestamp === d.timestamp);
+          if (existing) {
+            existing[`price${tf}`] = d.close;
+          } else {
+            trendChartData.push({ timestamp: d.timestamp, [`price${tf}`]: d.close });
+          }
+        });
+      }
+    });
+    setRegimes(newRegimes);
+    setTrendData(trendChartData.sort((a, b) => a.timestamp - b.timestamp));
+    if (candles.length > 0) {
+      const closePrices = candles.map(c => c.close);
+      const rsiValues = RSI.calculate({ period: 14, values: closePrices });
+      const macdValues = MACD.calculate({ values: closePrices, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
+      setIndicatorData({
+        rsi: candles.slice(-rsiValues.length).map((c, i) => ({ timestamp: c.timestamp, value: rsiValues[i] })),
+        macd: candles.slice(-macdValues.length).map((c, i) => ({ timestamp: c.timestamp, ...macdValues[i] })),
+      });
+    }
+  }, [symbol, exchange, candles]);
+  useEffect(() => {
+    if (activeTab === 'trends') {
+      loadTrends();
+    }
+  }, [activeTab, loadTrends]);
   useEffect(() => {
     const handleSignal = (sig: Signal) => {
       setSignals(prev => [sig, ...prev.slice(0, 9)]);
@@ -116,12 +166,13 @@ export default function TradingDashboard() {
       toast.success(`Autonomous Signal: ${sig.symbol} ${sig.vote.toUpperCase()}`, {
         description: `Confidence: ${sig.confidence.toFixed(1)}%`,
       });
-      if (sig.confidence > 80 && (sig.vote === 'buy' || sig.vote === 'sell')) {
+      if (sig.confidence > 90 && (sig.vote === 'buy' || sig.vote === 'sell')) {
         monitorRef.current?.placeOrder(sig.vote);
         toast.info(`High-confidence signal detected. Auto-placing paper trade for ${sig.vote}.`);
       }
     };
     bot.on('signal', handleSignal);
+    return () => { /* cleanup */ };
   }, []);
   useEffect(() => {
     if (isBotActive) {
@@ -166,6 +217,11 @@ export default function TradingDashboard() {
   };
   const voteData = [{ name: 'Buy', value: votes.buy }, { name: 'Sell', value: votes.sell }, { name: 'Hold', value: votes.hold }];
   const VOTE_COLORS = ['#22c55e', '#ef4444', '#6b7280'];
+  const getRegimeColor = (regime: string) => {
+    if (regime === 'bull') return 'bg-green-500/20 text-green-700 dark:text-green-400';
+    if (regime === 'bear') return 'bg-red-500/20 text-red-700 dark:text-red-400';
+    return 'bg-gray-500/20 text-gray-700 dark:text-gray-400';
+  };
   return (
     <div className="min-h-screen bg-muted/30 dark:bg-background/50">
       <header className="sticky top-0 z-30 flex h-14 items-center gap-4 border-b bg-background/80 backdrop-blur-lg px-4 sm:px-6">
@@ -205,7 +261,7 @@ export default function TradingDashboard() {
                       </ResponsiveContainer>}
                     </CardContent>
                   </Card>
-                  <Tabs defaultValue="trades" value={activeTab} onValueChange={setActiveTab} role="tablist" aria-label="Trading views"><TabsList><TabsTrigger value="trades">Trades</TabsTrigger><TabsTrigger value="paper-trading">Paper Trading</TabsTrigger><TabsTrigger value="autonomous">Autonomous Bot</TabsTrigger><TabsTrigger value="library">Library</TabsTrigger></TabsList>
+                  <Tabs defaultValue="trades" value={activeTab} onValueChange={setActiveTab} role="tablist" aria-label="Trading views"><TabsList><TabsTrigger value="trades">Trades</TabsTrigger><TabsTrigger value="paper-trading">Paper Trading</TabsTrigger><TabsTrigger value="autonomous">Autonomous Bot</TabsTrigger><TabsTrigger value="trends">Trends View</TabsTrigger><TabsTrigger value="library">Library</TabsTrigger></TabsList>
                     <AnimatePresence mode="wait">
                       <motion.div key={activeTab} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.2 }}>
                         <TabsContent value="trades" forceMount={activeTab === 'trades' ? true : undefined} className={activeTab !== 'trades' ? 'hidden' : ''}><TradeTable trades={backtestResult?.trades || []} /></TabsContent>
@@ -218,6 +274,18 @@ export default function TradingDashboard() {
                             <aside className="lg:col-span-4 space-y-6">
                               <Card><CardHeader><CardTitle>Bot Control</CardTitle></CardHeader><CardContent className="space-y-4"><Button onClick={() => setIsBotActive(true)} disabled={isBotActive} className="w-full"><Play className="w-4 h-4 mr-2" /> Start Scanner</Button><Button onClick={() => setIsBotActive(false)} disabled={!isBotActive} variant="outline" className="w-full"><Pause className="w-4 h-4 mr-2" /> Stop Scanner</Button><Button onClick={() => { if (signals[0]) { const metrics = validateSignal(strategy, signals[0], candles); toast.info(`Signal Validation: Win Rate is ${(metrics.winRate * 100).toFixed(1)}%`, { description: `This signal appears ${metrics.winRate > 0.5 ? 'strong' : 'weak'} against the current strategy.` }); } else { toast.info("No signal to validate."); } }} className="w-full" variant="secondary"><CheckCircle className="w-4 h-4 mr-2" /> Validate Latest Signal</Button></CardContent></Card>
                               <Card><CardHeader><CardTitle>Signal Distribution</CardTitle></CardHeader><CardContent className="h-[250px]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={voteData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label>{voteData.map((entry, index) => (<Cell key={`cell-${index}`} fill={VOTE_COLORS[index % VOTE_COLORS.length]} />))}</Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer></CardContent></Card>
+                            </aside>
+                          </div>
+                        </TabsContent>
+                        <TabsContent value="trends" forceMount={activeTab === 'trends' ? true : undefined} className={activeTab !== 'trends' ? 'hidden' : ''}>
+                          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-4">
+                            <div className="lg:col-span-8 space-y-6">
+                              <Card><CardHeader><CardTitle>Regime Analysis</CardTitle></CardHeader><CardContent><div className="grid grid-cols-1 md:grid-cols-3 gap-4">{['1h', '4h', '1d'].map((tf, i) => (<motion.div key={tf} initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: i * 0.1 }} className={`p-4 rounded-lg text-center ${getRegimeColor(regimes[tf] || 'chop')}`}><p className="font-bold text-lg">{tf.toUpperCase()}</p><p className="text-sm capitalize">{regimes[tf] || 'Calculating...'}</p></motion.div>))}</div></CardContent></Card>
+                              <Card><CardHeader><CardTitle>RSI (14)</CardTitle></CardHeader><CardContent className="h-[200px] p-0"><ResponsiveContainer width="100%" height="100%"><AreaChart data={indicatorData.rsi}><defs><linearGradient id="colorRsi" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#22c55e" stopOpacity={0.8}/><stop offset="95%" stopColor="#22c55e" stopOpacity={0}/></linearGradient></defs><Tooltip /><YAxis domain={[0, 100]} /><ReferenceLine y={70} stroke="red" strokeDasharray="3 3" /><ReferenceLine y={30} stroke="green" strokeDasharray="3 3" /><Area type="monotone" dataKey="value" stroke="#22c55e" fill="url(#colorRsi)" /></AreaChart></ResponsiveContainer></CardContent></Card>
+                              <Card><CardHeader><CardTitle>MACD (12, 26, 9)</CardTitle></CardHeader><CardContent className="h-[200px] p-0"><ResponsiveContainer width="100%" height="100%"><LineChart data={indicatorData.macd}><Tooltip /><Line type="monotone" dataKey="MACD" stroke="#ef4444" dot={false} /><Line type="monotone" dataKey="signal" stroke="#f59e0b" dot={false} /><ReferenceLine y={0} stroke="hsl(var(--border))" /></LineChart></ResponsiveContainer></CardContent></Card>
+                            </div>
+                            <aside className="lg:col-span-4 space-y-6">
+                              <Card><CardHeader><CardTitle>Multi-Timeframe Price</CardTitle></CardHeader><CardContent className="h-[300px] p-0"><ResponsiveContainer width="100%" height="100%"><LineChart data={trendData}><Tooltip /><XAxis dataKey="timestamp" tickFormatter={(ts) => new Date(ts).toLocaleDateString()} /><YAxis domain={['auto', 'auto']} /><Line type="monotone" dataKey="price1h" stroke="#F38020" name="1h" dot={false} /><Line type="monotone" dataKey="price4h" stroke="#4F46E5" name="4h" dot={false} /><Line type="monotone" dataKey="price1d" stroke="#06B6D4" name="1d" dot={false} /></LineChart></ResponsiveContainer></CardContent></Card>
                             </aside>
                           </div>
                         </TabsContent>

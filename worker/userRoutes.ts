@@ -4,6 +4,7 @@ import { ChatAgent } from './agent';
 import { API_RESPONSES } from './config';
 import { Env, getAppController, registerSession, unregisterSession } from "./core-utils";
 import type { SessionInfo, Candle } from "./types";
+import { executeTool } from './tools';
 /**
  * DO NOT MODIFY THIS FUNCTION. Only for your reference.
  */
@@ -44,11 +45,22 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
                 return c.json({ success: false, error: 'Insufficient candle data' }, 400);
             }
             const candles: Candle[] = ohlcv.map(([ts, o, h, l, c, v]: number[]) => ({ timestamp: ts, open: o, high: h, low: l, close: c, volume: v }));
-            // 2. Fetch sentiment (mocked)
+            // 2. Fetch sentiment
             let sentiment = 'neutral';
             if (includeSentiment) {
-                const sentimentScore = Math.random() * 2 - 1;
-                sentiment = sentimentScore > 0.3 ? `bullish (${sentimentScore.toFixed(2)})` : sentimentScore < -0.3 ? `bearish (${sentimentScore.toFixed(2)})` : `neutral (${sentimentScore.toFixed(2)})`;
+                try {
+                    const sentimentRes = await c.fetch(new Request(new URL(c.req.url).origin + '/api/sentiment', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ symbol, sources: ['twitter', 'reddit'] })
+                    }));
+                    const sentimentData = await sentimentRes.json<{ success: boolean; data?: { buzz: number } }>();
+                    if (sentimentData.success && sentimentData.data) {
+                        sentiment = `Social buzz score: ${sentimentData.data.buzz.toFixed(2)} (-1 bearish to +1 bullish)`;
+                    }
+                } catch (e) {
+                    console.warn('Could not fetch sentiment for council vote:', e);
+                }
             }
             // 3. Call agent for council vote
             const agentId = `council-agent-${crypto.randomUUID()}`;
@@ -70,7 +82,7 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
                 const errorText = await agentResponse.text();
                 throw new Error(`Agent failed with status ${agentResponse.status}: ${errorText}`);
             }
-            const responseJson = await agentResponse.json();
+            const responseJson: { success: boolean; data?: any; error?: string } = await agentResponse.json();
             const councilData = responseJson.data?.councilResponse;
             if (!councilData) {
                 return c.json({ success: false, error: 'Agent did not return council vote data', agentResponse: responseJson }, 500);
@@ -83,6 +95,46 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
             return c.json({ success: true, data: councilData });
         } catch (e: any) {
             console.error('Council vote error:', e);
+            return c.json({ success: false, error: e.message }, 500);
+        }
+    });
+    app.post('/api/sentiment', async (c) => {
+        try {
+            const { symbol = 'BTC/USDT', sources = ['twitter', 'reddit'] } = await c.req.json();
+            const searchQueries: string[] = [];
+            if (sources.includes('twitter')) searchQueries.push(`recent ${symbol} twitter sentiment`);
+            if (sources.includes('reddit')) searchQueries.push(`recent ${symbol} reddit discussion sentiment`);
+            const results: { source: string; content: string }[] = [];
+            for (const query of searchQueries) {
+                const toolRes = await executeTool('web_search', { query, num_results: 5 });
+                if ('content' in toolRes) {
+                    results.push({ source: query.split(' ')[1], content: toolRes.content });
+                }
+            }
+            // Parse buzz: simple heuristic (positive words - negative words)/total
+            const buzzWords = {
+                positive: ['bullish', 'buy', 'up', 'moon', 'pump', 'strong', 'positive', 'breakout'],
+                negative: ['bearish', 'sell', 'down', 'dump', 'crash', 'weak', 'negative', 'fud']
+            };
+            let score = 0;
+            let totalWords = 0;
+            results.forEach(r => {
+                const text = r.content.toLowerCase();
+                buzzWords.positive.forEach(w => {
+                    const count = (text.match(new RegExp(`\\b${w}\\b`, 'g')) || []).length;
+                    score += count;
+                    totalWords += count;
+                });
+                buzzWords.negative.forEach(w => {
+                    const count = (text.match(new RegExp(`\\b${w}\\b`, 'g')) || []).length;
+                    score -= count;
+                    totalWords += count;
+                });
+            });
+            const buzz = totalWords > 0 ? Math.max(-1, Math.min(1, score / totalWords * 5)) : 0;
+            return c.json({ success: true, data: { buzz, sources } });
+        } catch (e: any) {
+            console.error('Sentiment analysis error:', e);
             return c.json({ success: false, error: e.message }, 500);
         }
     });
