@@ -8,6 +8,7 @@ export interface ChatResponse {
 }
 export const MODELS = [
   { id: 'nim/meta/llama-3.1-70b-instruct', name: 'NVIDIA Llama 3.1 70B' },
+  { id: 'nim/meta/llama-3.1-405b-instruct', name: 'NIM Llama 3.1 405B (preferred)' },
   { id: 'nim/mistralai/mistral-nemo-12b-instruct', name: 'NVIDIA Mistral Nemo 12B' },
   { id: 'google-ai-studio/gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
   { id: 'google-ai-studio/gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
@@ -41,6 +42,10 @@ class ChatService {
   async sendMessage(message: string, model?: string, onChunk?: (chunk: string) => void): Promise<ChatResponse> {
     try {
       if (model?.startsWith('nim/')) {
+        // Prefer the 405B Llama model when explicitly requested
+        if (model.includes('llama-3.1-405b')) {
+          model = 'nim/meta/llama-3.1-405b-instruct';
+        }
         console.log(`NIM Query sent: ${message}`);
       }
       const response = await this.fetchApi(`${this.baseUrl}/chat`, {

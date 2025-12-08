@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { ArrowRight, Bot, BrainCircuit, CandlestickChart, Zap } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -28,6 +28,7 @@ const stats = [
   },
 ];
 export function HomePage() {
+  const navigate = useNavigate();
   return (
     <div className="min-h-screen flex flex-col bg-background text-foreground">
       <ThemeToggle className="fixed top-4 right-4" />
@@ -38,8 +39,8 @@ export function HomePage() {
           </div>
           <h1 className="text-xl font-bold font-display">Aurora Trade Studio</h1>
         </div>
-        <Button variant="ghost" asChild>
-          <Link to="/trade">Launch App</Link>
+        <Button variant="ghost" onClick={() => navigate('/trade')}>
+          Launch App
         </Button>
       </header>
       <main className="flex-1">
@@ -61,10 +62,8 @@ export function HomePage() {
                 Aurora is a visually exceptional studio for backtesting and prototyping trading strategies with transparent metrics and AI-driven signal explanations.
               </p>
               <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
-                <Button size="lg" className="w-full sm:w-auto text-lg font-semibold shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-shadow duration-300 bg-gradient-to-r from-[#F38020] to-[#d96f1c] hover:from-[#e0761b] hover:to-[#c46218] text-white" asChild>
-                  <Link to="/trade">
-                    Start Building <ArrowRight className="ml-2 w-5 h-5" />
-                  </Link>
+                <Button size="lg" className="w-full sm:w-auto text-lg font-semibold shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-shadow duration-300 bg-gradient-to-r from-[#F38020] to-[#d96f1c] hover:from-[#e0761b] hover:to-[#c46218] text-white" onClick={() => navigate('/trade')}>
+                  Start Building <ArrowRight className="ml-2 w-5 h-5" />
                 </Button>
                 <Button size="lg" variant="outline" className="w-full sm:w-auto text-lg">
                   Learn More
@@ -105,7 +104,9 @@ export function HomePage() {
           <p className="mt-4">Built with ❤️ at Cloudflare</p>
         </div>
       </footer>
-      <Toaster richColors closeButton />
+      <Toaster />
     </div>
   );
 }
+
+export default HomePage;

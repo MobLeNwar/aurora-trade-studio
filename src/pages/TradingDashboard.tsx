@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Zap, Bot, Settings, BrainCircuit, Clock, Loader2, Download } from 'lucide-react';
+import { Zap, Bot, Settings, BrainCircuit, Clock, Loader2, Download, Play, Pause } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -12,15 +12,16 @@ import { ChatAssistantWrapper } from '@/components/ui/ChatAssistantWrapper';
 import { CsvUploader } from '@/components/trading/CsvUploader';
 import { PaperTradingMonitor } from '@/components/trading/PaperTradingMonitor';
 import { StrategyLibrary } from '@/components/trading/StrategyLibrary';
-import { runBacktest, optimizeParams, BacktestResult, Strategy, Candle, MonteCarloResult, fetchHistoricalData, runMonteCarlo } from '@/lib/trading';
+import { runBacktest, optimizeParams, BacktestResult, Strategy, Candle, MonteCarloResult, fetchHistoricalData, runMonteCarlo, bot } from '@/lib/trading';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { Toaster, toast } from 'sonner';
 import { Link } from 'react-router-dom';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { ErrorFallback } from '@/components/ErrorFallback';
 import fallbackCandlesData from '@/pages/TradingSimulatorData.json';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
 const initialStrategy: Strategy = {
   type: 'sma-cross',
   params: { shortPeriod: 10, longPeriod: 20 },
@@ -38,6 +39,9 @@ export default function TradingDashboard() {
   const [symbol, setSymbol] = useState(() => localStorage.getItem('trading-config-symbol') || 'BTC/USDT');
   const [exchange, setExchange] = useState(() => localStorage.getItem('trading-config-exchange') || 'binance');
   const [activeTab, setActiveTab] = useState('trades');
+  const [signals, setSignals] = useState<any[]>([]);
+  const [votes, setVotes] = useState({ buy: 0, sell: 0, hold: 0 });
+  const [isBotActive, setIsBotActive] = useState(false);
   const handleRunBacktest = useCallback((currentStrategy: Strategy) => {
     if (candles.length === 0) {
       toast.error("No historical data available. Please upload CSV or wait for data to fetch.");
@@ -94,16 +98,23 @@ export default function TradingDashboard() {
       }
     };
     loadData();
-    // Test: Verify backtest runs without data fetch errors using sample data.
   }, [symbol, exchange]);
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isAutoBacktesting) {
-      interval = setInterval(() => handleRunBacktest(strategy), 60000);
-      toast.info("Automated backtesting scheduled every 60 seconds.");
-    }
-    return () => clearInterval(interval);
-  }, [isAutoBacktesting, strategy, handleRunBacktest]);
+    const handleSignal = (sig: any) => {
+      setSignals(prev => [sig, ...prev.slice(0, 9)]);
+      setVotes(prev => {
+        const newVotes = { ...prev };
+        if (sig.vote === 'buy' || sig.vote === 'sell' || sig.vote === 'hold') {
+          newVotes[sig.vote]++;
+        }
+        return newVotes;
+      });
+      toast.success(`Autonomous Signal: ${sig.symbol} ${sig.vote.toUpperCase()}`, {
+        description: `Confidence: ${sig.confidence.toFixed(1)}%`,
+      });
+    };
+    bot.on('signal', handleSignal);
+  }, []);
   const handleOptimize = () => {
     if (candles.length === 0) {
       toast.error("No historical data available for optimization.");
@@ -137,6 +148,18 @@ export default function TradingDashboard() {
     URL.revokeObjectURL(url);
     toast.success("Results exported.");
   };
+  const handleStartBot = () => {
+    bot.start();
+    setIsBotActive(true);
+    toast.info("Autonomous bot scanner started.");
+  };
+  const handleStopBot = () => {
+    bot.stop();
+    setIsBotActive(false);
+    toast.info("Autonomous bot scanner stopped.");
+  };
+  const voteData = [{ name: 'Buy', value: votes.buy }, { name: 'Sell', value: votes.sell }, { name: 'Hold', value: votes.hold }];
+  const VOTE_COLORS = ['#22c55e', '#ef4444', '#6b7280'];
   return (
     <div className="min-h-screen bg-muted/30 dark:bg-background/50">
       <header className="sticky top-0 z-30 flex h-14 items-center gap-4 border-b bg-background/80 backdrop-blur-lg px-4 sm:px-6">
@@ -159,7 +182,7 @@ export default function TradingDashboard() {
                       <CsvUploader onDataLoaded={setCandles} />
                     </CardContent>
                   </Card>
-                  <AnimatePresence>{backtestResult && <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}><BacktestSummary metrics={backtestResult.metrics} monteCarlo={monteCarloResult} /></motion.div>}</AnimatePresence>
+                  <AnimatePresence>{backtestResult && <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}><BacktestSummary metrics={backtestResult.metrics} monteCarlo={monteCarloResult} latestSignal={signals[0]} /></motion.div>}</AnimatePresence>
                   <Card className="shadow-soft rounded-2xl overflow-hidden">
                     <CardHeader className="flex flex-row items-center justify-between"><CardTitle>Performance</CardTitle><div className="flex items-center gap-2">{isFetchingData && <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />}<Button variant="outline" size="sm" onClick={handleExport} disabled={!backtestResult}><Download className="w-4 h-4 mr-2" /> Export</Button></div></CardHeader>
                     <CardContent className="h-[400px] p-0">
@@ -176,11 +199,22 @@ export default function TradingDashboard() {
                       </ResponsiveContainer>}
                     </CardContent>
                   </Card>
-                  <Tabs defaultValue="trades" value={activeTab} onValueChange={setActiveTab} role="tablist" aria-label="Trading views"><TabsList><TabsTrigger value="trades">Trades</TabsTrigger><TabsTrigger value="paper-trading">Paper Trading</TabsTrigger><TabsTrigger value="library">Library</TabsTrigger></TabsList>
+                  <Tabs defaultValue="trades" value={activeTab} onValueChange={setActiveTab} role="tablist" aria-label="Trading views"><TabsList><TabsTrigger value="trades">Trades</TabsTrigger><TabsTrigger value="paper-trading">Paper Trading</TabsTrigger><TabsTrigger value="autonomous">Autonomous Bot</TabsTrigger><TabsTrigger value="library">Library</TabsTrigger></TabsList>
                     <AnimatePresence mode="wait">
                       <motion.div key={activeTab} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.2 }}>
                         <TabsContent value="trades" forceMount={activeTab === 'trades' ? true : undefined} className={activeTab !== 'trades' ? 'hidden' : ''}><TradeTable trades={backtestResult?.trades || []} /></TabsContent>
                         <TabsContent value="paper-trading" forceMount={activeTab === 'paper-trading' ? true : undefined} className={activeTab !== 'paper-trading' ? 'hidden' : ''}><PaperTradingMonitor symbol={symbol} exchange={exchange} /></TabsContent>
+                        <TabsContent value="autonomous" forceMount={activeTab === 'autonomous' ? true : undefined} className={activeTab !== 'autonomous' ? 'hidden' : ''}>
+                          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-4">
+                            <div className="lg:col-span-8 space-y-6">
+                              <Card><CardHeader><CardTitle>Recent Autonomous Signals</CardTitle></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Time</TableHead><TableHead>Symbol</TableHead><TableHead>Vote</TableHead><TableHead>Confidence</TableHead><TableHead>Rationale</TableHead></TableRow></TableHeader><TableBody>{signals.length > 0 ? signals.map((sig, i) => (<motion.tr key={sig.timestamp} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.1 }}><TableCell>{new Date(sig.timestamp).toLocaleTimeString()}</TableCell><TableCell>{sig.symbol}</TableCell><TableCell><Badge variant={sig.vote === 'buy' ? 'default' : sig.vote === 'sell' ? 'destructive' : 'secondary'} className={sig.vote === 'buy' ? 'bg-green-500/20 text-green-700 dark:bg-green-500/10 dark:text-green-400' : sig.vote === 'sell' ? 'bg-red-500/20 text-red-700 dark:bg-red-500/10 dark:text-red-400' : ''}>{sig.vote.toUpperCase()}</Badge></TableCell><TableCell>{sig.confidence.toFixed(1)}%</TableCell><TableCell className="max-w-xs truncate" title={sig.rationale}>{sig.rationale}</TableCell></motion.tr>)) : <TableRow><TableCell colSpan={5} className="text-center h-24">No signals received yet. Start the bot to begin.</TableCell></TableRow>}</TableBody></Table></CardContent></Card>
+                            </div>
+                            <aside className="lg:col-span-4 space-y-6">
+                              <Card><CardHeader><CardTitle>Bot Control</CardTitle></CardHeader><CardContent className="space-y-4"><Button onClick={handleStartBot} disabled={isBotActive} className="w-full"><Play className="w-4 h-4 mr-2" /> Start Scanner</Button><Button onClick={handleStopBot} disabled={!isBotActive} variant="outline" className="w-full"><Pause className="w-4 h-4 mr-2" /> Stop Scanner</Button></CardContent></Card>
+                              <Card><CardHeader><CardTitle>Signal Distribution</CardTitle></CardHeader><CardContent className="h-[250px]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={voteData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label>{voteData.map((entry, index) => (<Cell key={`cell-${index}`} fill={VOTE_COLORS[index % VOTE_COLORS.length]} />))}</Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer></CardContent></Card>
+                            </aside>
+                          </div>
+                        </TabsContent>
                         <TabsContent value="library" forceMount={activeTab === 'library' ? true : undefined} className={activeTab !== 'library' ? 'hidden' : ''}><StrategyLibrary currentStrategy={strategy} onLoadStrategy={setStrategy} /></TabsContent>
                       </motion.div>
                     </AnimatePresence>

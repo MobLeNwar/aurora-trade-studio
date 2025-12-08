@@ -85,6 +85,27 @@ const isReactRouterFutureFlagMessage = (message: string): boolean => {
   return futurePatterns.some((p) => p.test(message));
 };
 
+// Suppress noisy Vite HMR / dev-server transient messages while in development.
+// These messages are often transient (failed websocket connect, failed update, etc.)
+// and can spam client-side error reporting during dev. We only short-circuit
+// reporting when running in a dev environment (import.meta.env.DEV). Production
+// reporting remains unchanged.
+const isViteHmrMessage = (message?: string, stack?: string): boolean => {
+  if (!message && !stack) return false;
+  const text = `${message ?? ""}\n${stack ?? ""}`;
+  const patterns = [
+    /vite/i,
+    /hot module replacement/i,
+    /hmr/i,
+    /failed to connect/i,
+    /websocket/i,
+    /warnFailedUpdate/i,
+    /failed to fetch/i,
+    /client\/hmr/i,
+  ];
+  return patterns.some((p) => p.test(text));
+};
+
 const isDeprecatedReactWarningMessage = (message: string): boolean => {
   const deprecatedPatterns = [
     /componentWillReceiveProps/,
@@ -377,8 +398,13 @@ class ErrorReporter {
     prefix: string
   ) {
     return (...args: ConsoleArgs) => {
-      // Call original first
-      original.apply(console, args);
+      // Call original first. Guard forwarding to original console in a try/catch
+      // to avoid throwing if console has been tampered with by other tools.
+      try {
+        original.apply(console, args);
+      } catch {
+        // Swallow errors from forwarding to original console to avoid noisy failures
+      }
 
       try {
         const message = formatConsoleArgs(args);
@@ -394,6 +420,20 @@ class ErrorReporter {
           level,
           url: window.location.href,
         };
+
+        // Suppress known Vite HMR/dev-server transient messages when in development.
+        // This avoids spamming reports for dev-only websocket/HMR noise. Production
+        // reporting is unaffected.
+        try {
+          if (
+            (import.meta as any).env?.DEV &&
+            isViteHmrMessage(context.message, context.stack)
+          ) {
+            return;
+          }
+        } catch {
+          // If import.meta is not available for some reason, continue normally.
+        }
 
         const filterResult = this.filterError(context);
         if (!filterResult.shouldReport) return;
@@ -746,7 +786,12 @@ if (typeof window !== "undefined") {
     defaultLevel: "warning" | "error"
   ) =>
     function (...args: unknown[]) {
-      original.apply(console, args);
+      // Forward to original console safely.
+      try {
+        original.apply(console, args);
+      } catch {
+        // Swallow console forwarding errors to avoid interfering with app execution.
+      }
 
       try {
         const message = formatConsoleArgs(args);
@@ -759,6 +804,20 @@ if (typeof window !== "undefined") {
           level,
           url: window.location.href,
         };
+
+        // Suppress known Vite HMR/dev-server transient messages when in development.
+        // This prevents noisy client-side reports during development. Production behavior
+        // remains unchanged.
+        try {
+          if (
+            (import.meta as any).env?.DEV &&
+            isViteHmrMessage(context.message, context.stack)
+          ) {
+            return;
+          }
+        } catch {
+          // If import.meta is unavailable, fall through to normal behavior.
+        }
 
         if (shouldReportImmediate(context)) {
           const payload = createImmediateErrorPayload(context.message, level);

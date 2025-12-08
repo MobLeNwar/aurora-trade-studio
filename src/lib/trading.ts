@@ -10,6 +10,78 @@ export interface Trade { entryTime: number; exitTime: number; entryPrice: number
 export interface BacktestMetrics { netProfit: number; winRate: number; totalTrades: number; profitFactor: number; maxDrawdown: number; sharpeRatio: number; }
 export interface BacktestResult { trades: Trade[]; metrics: BacktestMetrics; equityCurve: ({ date: string; value: number;[key: string]: any })[]; indicatorSeries: { [key: string]: (number | undefined)[] }; }
 export interface MonteCarloResult { meanPnl: number; stdDev: number; pnlDistribution: number[]; worstDrawdown: number; var95: number; confidenceInterval: [number, number]; }
+class SimpleEmitter {
+  listeners: { [key: string]: Function[] };
+  constructor() {
+    this.listeners = {};
+  }
+  on(event: string, cb: Function) {
+    this.listeners[event] = this.listeners[event] || [];
+    this.listeners[event].push(cb);
+  }
+  emit(event: string, data: any) {
+    if (this.listeners[event]) {
+      this.listeners[event].forEach(cb => cb(data));
+    }
+  }
+}
+export class AutonomousBot extends SimpleEmitter {
+  symbols: string[];
+  exchange: string;
+  pollInterval: number;
+  interval: NodeJS.Timeout | null;
+  constructor(symbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT'], exchange = 'binance', pollInterval = 300000) {
+    super();
+    this.symbols = symbols;
+    this.exchange = exchange;
+    this.pollInterval = pollInterval;
+    this.interval = null;
+  }
+  async scan() {
+    console.log(`Scanning symbols: ${this.symbols.join(', ')}`);
+    for (const symbol of this.symbols) {
+      try {
+        const res = await fetch('/api/council-vote', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ symbol, timeframe: '5m', limit: 50, includeSentiment: true })
+        });
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({ error: `HTTP Error: ${res.status}` }));
+          throw new Error(errorData.error || 'Failed to fetch council vote');
+        }
+        const data = await res.json();
+        if (data.success && data.data.consensus.thresholdMet) {
+          const signal = {
+            symbol,
+            vote: data.data.consensus.vote,
+            confidence: data.data.consensus.majority,
+            rationale: data.data.aggregatedRationale,
+            timestamp: Date.now()
+          };
+          this.emit('signal', signal);
+          console.log(`Autonomous signal: ${symbol} ${data.data.consensus.vote.toUpperCase()} (${data.data.consensus.majority}%)`);
+        }
+      } catch (e) {
+        console.warn(`Council vote failed for ${symbol}:`, e);
+      }
+    }
+  }
+  start() {
+    if (this.interval) return;
+    console.log('Autonomous bot started.');
+    this.scan();
+    this.interval = setInterval(() => this.scan(), this.pollInterval);
+  }
+  stop() {
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+      console.log('Autonomous bot stopped.');
+    }
+  }
+}
+export const bot = new AutonomousBot();
 let lastFetchedData: Candle[] = [];
 export async function fetchHistoricalData({ exchange = 'binance', symbol = 'BTC/USDT', timeframe = '1h', limit = 500 }: { exchange?: string; symbol?: string; timeframe?: string; limit?: number }): Promise<Candle[] | null> {
   const cacheKey = `historical-${exchange}-${symbol}-${timeframe}-${limit}`;
@@ -36,9 +108,28 @@ export async function fetchHistoricalData({ exchange = 'binance', symbol = 'BTC/
       const errorData = await response.json().catch(() => ({ error: `HTTP Error: ${response.status}` }));
       throw new Error(errorData.error || 'Failed to fetch data from proxy');
     }
-    const proxyData = await response.json();
-    if (proxyData.success && Array.isArray(proxyData.data) && proxyData.data.length >= 100) {
-      const candles = proxyData.data;
+    type ProxyResponse = { success?: boolean; data?: any; error?: string; [key: string]: any };
+    // attempt to parse as text first to guard against invalid JSON
+    const rawText = await response.text().catch(() => '');
+    let proxyData: ProxyResponse = {};
+    try {
+      proxyData = rawText ? JSON.parse(rawText) : {};
+    } catch (e) {
+      console.warn('Invalid JSON from proxy /api/fetch-data', e);
+      proxyData = {};
+    }
+    if (proxyData && proxyData.success && Array.isArray(proxyData.data) && proxyData.data.length >= 100) {
+      // Normalize/validate candle objects to ensure shape matches Candle[]
+      const candles: Candle[] = proxyData.data.map((c: any) => {
+        if (!c) return null as any;
+        const timestamp = Number(c.timestamp ?? c[0]);
+        const open = Number(c.open ?? c[1]);
+        const high = Number(c.high ?? c[2]);
+        const low = Number(c.low ?? c[3]);
+        const close = Number(c.close ?? c[4]);
+        const volume = Number(c.volume ?? c[5] ?? c[6] ?? 0);
+        return { timestamp, open, high, low, close, volume } as Candle;
+      }).filter((c: any) => c && Number.isFinite(c.timestamp) && Number.isFinite(c.close));
       lastFetchedData = candles;
       try {
         localStorage.setItem(cacheKey, JSON.stringify({ data: candles, timestamp: Date.now() }));
@@ -47,7 +138,7 @@ export async function fetchHistoricalData({ exchange = 'binance', symbol = 'BTC/
       }
       return candles;
     } else {
-      throw new Error(proxyData.error || 'Insufficient data from proxy');
+      throw new Error((proxyData && proxyData.error) ? proxyData.error : 'Insufficient data from proxy');
     }
   } catch (error) {
     console.warn(`Failed to fetch data via proxy for ${symbol}:`, error);
@@ -61,12 +152,21 @@ export async function fetchHistoricalData({ exchange = 'binance', symbol = 'BTC/
 }
 export async function fetchLivePrice({ exchange = 'binance', symbol = 'BTC/USDT' }: { exchange?: string; symbol?: string }): Promise<number | null> {
   try {
-    const ccxtModule: any = await new Function("return import('ccxt')")();
-    const ExchangeClass = (ccxtModule as any)?.[exchange];
-    if (!ExchangeClass) throw new Error(`Exchange ${exchange} not found in ccxt module`);
-    const exchangeInstance: any = new ExchangeClass();
-    const ticker = await exchangeInstance.fetchTicker(symbol);
-    return ticker.last ?? null;
+    const resp = await fetch('/api/fetch-price', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ exchange, symbol }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: `HTTP Error: ${resp.status}` }));
+      throw new Error(err?.error || `HTTP Error: ${resp.status}`);
+    }
+    const data = await resp.json().catch(() => null);
+    if (data && typeof data === 'object') {
+      const price = Number((data as any).price ?? (data as any).last ?? (data as any).lastPrice);
+      return Number.isFinite(price) ? price : null;
+    }
+    return null;
   } catch (error) {
     console.error(`Failed to fetch live price for ${symbol}:`, error);
     return null;
@@ -221,59 +321,127 @@ export function parseCsvData(csvString: string): Candle[] {
 export function optimizeParams(strategy: Strategy, paramRanges: Record<string, number[]>, candles: Candle[]): Strategy {
   const keys = Object.keys(paramRanges);
   if (keys.length === 0) return strategy;
-  // Build combinations (cartesian product) of the provided ranges.
-  let combos: number[][] = [[]];
+  // Prepare ranges for keys, fallback to current values if a range is empty
+  const ranges: Record<string, number[]> = {};
   for (const k of keys) {
-    const vals = paramRanges[k] ?? [];
-    if (!Array.isArray(vals) || vals.length === 0) {
-      // If a key has no values, skip it in combinations (keeps previous combos unchanged).
-      continue;
+    const vals = paramRanges[k];
+    if (Array.isArray(vals) && vals.length > 0) ranges[k] = vals.slice();
+    else {
+      // derive single-value range from existing strategy params/risk if available
+      const fallback = (k in strategy.params ? (strategy.params as any)[k] : (k in strategy.risk ? (strategy.risk as any)[k] : undefined));
+      ranges[k] = typeof fallback === 'number' ? [fallback] : [0];
     }
-    const next: number[][] = [];
-    for (const combo of combos) {
-      for (const v of vals) next.push([...combo, v]);
-    }
-    combos = next;
   }
-  // If combos ended up empty (e.g., all ranges empty), return original strategy.
-  if (combos.length === 0) return strategy;
-  let bestStrategy: Strategy = strategy;
-  let bestSharpe = -Infinity;
-  for (const combo of combos) {
-    // Create candidate strategy by cloning to avoid mutating the original
-    const candidate: Strategy = {
-      type: strategy.type,
-      params: { ...strategy.params },
-      risk: { ...strategy.risk },
-    };
-    // Apply combo values to candidate
+  // Deterministic pseudo-random generator (LCG) for reproducible results
+  let seed = 123456789;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 0x100000000;
+  };
+  // Helper to create a candidate strategy from an array of numeric values aligned with keys
+  const buildCandidate = (values: number[]): Strategy => {
+    const candidate: Strategy = { type: strategy.type, params: { ...strategy.params }, risk: { ...strategy.risk } };
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
-      // If combo shorter than keys (due to skipped empty ranges), guard access
-      const value = combo[i];
-      if (typeof value === 'undefined') continue;
-      if (key in candidate.risk) {
-        // dynamic assignment to risk
-        (candidate.risk as any)[key] = value;
-      } else if (key in candidate.params) {
-        (candidate.params as any)[key] = value;
-      } else {
-        // unknown keys stored in params
-        (candidate.params as any)[key] = value;
-      }
+      const val = values[i];
+      if (key in candidate.risk) (candidate.risk as any)[key] = val;
+      else if (key in candidate.params) (candidate.params as any)[key] = val;
+      else (candidate.params as any)[key] = val;
     }
-    // Evaluate candidate safely
+    return candidate;
+  };
+  // Initialize population
+  const populationSize = Math.min(30, Math.max(6, keys.length * 3));
+  const population: { values: number[]; fitness: number; sharpe: number; winRate: number }[] = [];
+  for (let i = 0; i < populationSize; i++) {
+    const vals: number[] = [];
+    for (const k of keys) {
+      const r = ranges[k];
+      const idx = Math.floor(rand() * r.length);
+      vals.push(r[idx]);
+    }
+    population.push({ values: vals, fitness: -Infinity, sharpe: 0, winRate: 0 });
+  }
+  let bestStrategy: Strategy = strategy;
+  let bestFitness = -Infinity;
+  const evaluate = (entry: { values: number[]; fitness: number; sharpe: number; winRate: number }) => {
     try {
-      const result = runBacktest(candidate, candles);
-      const sharpe = result?.metrics?.sharpeRatio ?? 0;
-      if (typeof sharpe === 'number' && sharpe > bestSharpe) {
-        bestSharpe = sharpe;
-        bestStrategy = candidate;
-      }
+      const candidate = buildCandidate(entry.values);
+      const res = runBacktest(candidate, candles);
+      const sharpe = res?.metrics?.sharpeRatio ?? 0;
+      const winRate = res?.metrics?.winRate ?? 0;
+      // Fitness uses sharpe primarily, with bonus for high win rate (>0.8)
+      let fitness = sharpe;
+      if (winRate >= 0.8) fitness += 0.5;
+      // small penalty for overly complex parameter sets (not strictly necessary but stabilizes)
+      entry.fitness = fitness;
+      entry.sharpe = sharpe;
+      entry.winRate = winRate;
+      return true;
     } catch (e) {
-      // Ignore candidates that cause errors and continue searching
-      continue;
+      entry.fitness = -Infinity;
+      entry.sharpe = 0;
+      entry.winRate = 0;
+      return false;
     }
+  };
+  // Evaluate initial population
+  for (const p of population) {
+    evaluate(p);
+    if (p.fitness > bestFitness) {
+      bestFitness = p.fitness;
+      bestStrategy = buildCandidate(p.values);
+    }
+  }
+  const generations = 40;
+  for (let gen = 0; gen < generations; gen++) {
+    // Sort by fitness descending
+    population.sort((a, b) => b.fitness - a.fitness);
+    // Early stop if target heuristics met: Sharpe > 2 and winRate > 0.8
+    if (population[0].sharpe > 2 && population[0].winRate > 0.8) {
+      bestStrategy = buildCandidate(population[0].values);
+      break;
+    }
+    // Keep top elite
+    const eliteCount = Math.max(2, Math.floor(populationSize * 0.2));
+    const nextGen: typeof population = population.slice(0, eliteCount).map(e => ({ values: e.values.slice(), fitness: e.fitness, sharpe: e.sharpe, winRate: e.winRate }));
+    // Fill rest by crossover + mutation
+    while (nextGen.length < populationSize) {
+      // Select two parents via tournament selection
+      const pickParent = () => {
+        const a = population[Math.floor(rand() * population.length)];
+        const b = population[Math.floor(rand() * population.length)];
+        return (a.fitness > b.fitness) ? a : b;
+      };
+      const p1 = pickParent();
+      const p2 = pickParent();
+      const childVals: number[] = [];
+      for (let i = 0; i < keys.length; i++) {
+        // crossover: pick value from one of parents or average if numeric ranges have many values
+        const takeFromP1 = rand() > 0.5;
+        const v = takeFromP1 ? p1.values[i] : p2.values[i];
+        childVals.push(v);
+      }
+      // mutation: small chance to randomly change one gene to another value from its range
+      const mutationRate = 0.15;
+      for (let i = 0; i < keys.length; i++) {
+        if (rand() < mutationRate) {
+          const r = ranges[keys[i]];
+          const idx = Math.floor(rand() * r.length);
+          childVals[i] = r[idx];
+        }
+      }
+      const child = { values: childVals, fitness: -Infinity, sharpe: 0, winRate: 0 };
+      evaluate(child);
+      nextGen.push(child);
+      if (child.fitness > bestFitness) {
+        bestFitness = child.fitness;
+        bestStrategy = buildCandidate(child.values);
+      }
+    }
+    // replace population
+    population.length = 0;
+    population.push(...nextGen);
   }
   return bestStrategy;
 }

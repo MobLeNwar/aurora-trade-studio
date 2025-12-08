@@ -2,15 +2,17 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ArrowUp, ArrowDown, Percent, Hash, Target, TrendingDown, AlertTriangle, TrendingUp as TrendingUpIcon } from 'lucide-react';
+import { ArrowUp, ArrowDown, Percent, Hash, Target, TrendingDown, AlertTriangle, TrendingUp as TrendingUpIcon, Bot } from 'lucide-react';
 import { BarChart, Bar, ResponsiveContainer, XAxis, YAxis } from 'recharts';
 import { BacktestMetrics, MonteCarloResult } from '@/lib/trading';
+import { Badge } from '@/components/ui/badge';
 interface BacktestSummaryProps {
   metrics: BacktestMetrics;
   monteCarlo?: MonteCarloResult | null;
+  latestSignal?: { vote: string; confidence: number };
 }
 const formatPercent = (value: number) => `${(value * 100).toFixed(2)}%`;
-const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
+const formatCurrency = (value: number) => `${value.toFixed(2)}`;
 const formatNumber = (value: number) => value.toFixed(2);
 const metricCardVariants = {
   hidden: { opacity: 0, y: 20 },
@@ -33,7 +35,7 @@ const MetricCard = ({ title, value, icon, isPositive, isPercentage = false, isCu
     </motion.div>
   );
 };
-export function BacktestSummary({ metrics, monteCarlo }: BacktestSummaryProps) {
+export function BacktestSummary({ metrics, monteCarlo, latestSignal }: BacktestSummaryProps) {
   const summaryMetrics = [
     { title: 'Net Profit', value: metrics.netProfit, icon: metrics.netProfit >= 0 ? <ArrowUp className="h-4 w-4 text-muted-foreground" /> : <ArrowDown className="h-4 w-4 text-muted-foreground" />, isPositive: metrics.netProfit >= 0, isCurrency: true },
     { title: 'Win Rate', value: metrics.winRate, icon: <Target className="h-4 w-4 text-muted-foreground" />, isPositive: metrics.winRate > 0.5, isPercentage: true },
@@ -73,7 +75,22 @@ export function BacktestSummary({ metrics, monteCarlo }: BacktestSummaryProps) {
         animate="visible"
       >
         {monteCarlo ? mcMetrics.map((metric) => <MetricCard key={metric.title} {...metric} />) : Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}
-        {monteCarlo ? (
+        {latestSignal && (
+          <motion.div variants={metricCardVariants}>
+            <Card className="shadow-soft rounded-2xl h-full">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">AI Consensus</CardTitle>
+                <Bot className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <Badge variant={latestSignal.vote === 'buy' ? 'default' : latestSignal.vote === 'sell' ? 'destructive' : 'secondary'} className={latestSignal.vote === 'buy' ? 'bg-green-500/20 text-green-700 dark:bg-green-500/10 dark:text-green-400' : latestSignal.vote === 'sell' ? 'bg-red-500/20 text-red-700 dark:bg-red-500/10 dark:text-red-400' : ''}>
+                  {latestSignal.vote.toUpperCase()} ({latestSignal.confidence.toFixed(1)}%)
+                </Badge>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+        {monteCarlo && !latestSignal ? (
           <motion.div variants={metricCardVariants} className="md:col-span-2 lg:col-span-1">
             <Card className="shadow-soft rounded-2xl h-full">
               <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">PnL Distribution</CardTitle></CardHeader>

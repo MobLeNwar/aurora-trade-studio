@@ -114,26 +114,12 @@ export function DemoPage() { // Don't touch this exporting, Its a named export
     }
   };
   const handleClear = async () => {
-    if (false) { // Disabled legacy method
-      console.warn('Legacy method - use updated chatService');
-      if (chatService.clearMessages) {
-        const response = await chatService.clearMessages();
-        if (response.success && response.data) {
-          setChatState(prev => ({ ...prev, ...response.data }));
-        }
-      }
-    }
+    // Legacy method disabled - use updated chatService
+    console.warn('Legacy method disabled - use updated chatService');
   };
   const handleModelChange = async (model: string) => {
-    if (false) { // Disabled legacy method
-      console.warn('Legacy method - use updated chatService');
-      if (chatService.updateModel) {
-        const response = await chatService.updateModel(model);
-        if (response.success && response.data) {
-          setChatState(prev => ({ ...prev, ...response.data }));
-        }
-      }
-    }
+    // Legacy method disabled - use updated chatService
+    console.warn('Legacy method disabled - use updated chatService');
   };
   // Save current session if it has unsaved messages
   const saveCurrentSessionIfNeeded = async () => {
@@ -174,17 +160,8 @@ export function DemoPage() { // Don't touch this exporting, Its a named export
     await loadSessions();
   };
   const handleClearAllSessions = async () => {
-    if (false) { // Disabled legacy method
-      console.warn('Legacy method - use updated chatService');
-      if (chatService.clearAllSessions) {
-        const response = await chatService.clearAllSessions();
-        if (response.success) {
-          await loadSessions();
-          // Start fresh session after clearing all
-          handleNewSession();
-        }
-      }
-    }
+    // Legacy method disabled - use updated chatService
+    console.warn('Legacy method disabled - use updated chatService');
   };
   return (
     <AppLayout>

@@ -6,7 +6,9 @@ import {
 } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { enableMapSet } from "immer";
-import '@/lib/errorReporter';
+if (!import.meta.env.DEV) {
+  import('@/lib/errorReporter').catch(() => {});
+}
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { RouteErrorBoundary } from '@/components/RouteErrorBoundary';
 import '@/index.css';

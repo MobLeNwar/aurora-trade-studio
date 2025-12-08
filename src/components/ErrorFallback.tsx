@@ -6,8 +6,10 @@ interface ErrorFallbackProps {
   message?: string;
   error?: unknown;
   statusMessage?: string;
+  onRetry?: () => void;
+  onGoHome?: () => void;
 }
-export function ErrorFallback({ title, message, error, statusMessage }: ErrorFallbackProps) {
+export function ErrorFallback({ title, message, error, statusMessage, onRetry, onGoHome }: ErrorFallbackProps) {
   useEffect(() => {
     if (error && error instanceof Error) {
       errorReporter.report({
@@ -34,9 +36,16 @@ export function ErrorFallback({ title, message, error, statusMessage }: ErrorFal
             {error.message}
           </pre>
         )}
-        <Button onClick={() => window.location.reload()}>
-          Retry
-        </Button>
+        <div className="mt-4 flex justify-center gap-2">
+          <Button onClick={() => (onRetry ? onRetry() : window.location.reload())}>
+            Retry
+          </Button>
+          {onGoHome && (
+            <Button onClick={onGoHome}>
+              Go Home
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );
